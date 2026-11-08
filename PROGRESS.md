@@ -22,7 +22,7 @@ Hand-off record for continuing work across sessions. Update when a milestone or 
 - `agenda-first-notes audit`: passed.
 - Real local model (`qwen3.6:35b-a3b`) via `tests/test_real_model.py`: see "Real model results" below.
 
-Also verified: Tesseract and vision-model (qwen3.6) OCR on a Pillow-generated synthetic agenda screenshot, nesting preserved. Not verified here: Windows and Linux runs (CI config exists; not executed because the repo has not been pushed).
+Also verified: Tesseract and vision-model (qwen3.6) OCR on a Pillow-generated synthetic agenda screenshot, nesting preserved. Windows and Linux: verified by CI run 42523863717 (all jobs green, 2026-11-08).
 
 ## Real model results (ward council fixture, 1 segment, 1 review round, M2 Ultra)
 
@@ -38,7 +38,7 @@ Invariants asserted in every run: all stored evidence offsets match the original
 
 | # | Criterion | Status | How verified |
 |---|---|---|---|
-| 1 | Install on a supported OS | macOS ✔; Win/Linux ◐ | `python run.py` path exercised on macOS; CI matrix written, not yet run |
+| 1 | Install on a supported OS | macOS ✔; Win/Linux ✔ (CI) | `python run.py` path exercised on macOS; CI tests + e2e green on all three OSes |
 | 2 | Launch locally | ✔ | `agenda-first-notes serve` (Playwright webServer + manual) |
 | 3 | Connect to a local Ollama model | ✔ | Settings page lists models; real-model tests |
 | 4 | Choose Ward Council or Bishopric | ✔ | e2e workspace selector |
@@ -95,5 +95,5 @@ Not fixed (documented limitations, ROADMAP): `looks_overconfident` is lexical; `
 
 ## Remaining / next steps
 
-1. Push to GitHub (needs maintainer approval) and confirm CI on Windows/Linux.
+1. ~~Push to GitHub and confirm CI on Windows/Linux~~ — done 2026-11-08.
 2. Adversarial implementation reviews A–G and fix material findings; record outcomes here.
