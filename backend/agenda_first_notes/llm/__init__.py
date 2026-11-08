@@ -10,10 +10,17 @@ _provider: ModelProvider | None = None
 def get_provider() -> ModelProvider:
     global _provider
     if _provider is None:
-        from .. import config
-        from .ollama_provider import OllamaProvider
+        import os
 
-        _provider = OllamaProvider(config.load_settings().models.ollama_host)
+        if os.environ.get("AFN_PROVIDER") == "fake":  # tests / demos only; never the default
+            from .fake import FakeProvider, demo_handler
+
+            _provider = FakeProvider(demo_handler)
+        else:
+            from .. import config
+            from .ollama_provider import OllamaProvider
+
+            _provider = OllamaProvider(config.load_settings().models.ollama_host)
     return _provider
 
 
