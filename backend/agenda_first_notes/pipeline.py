@@ -377,7 +377,7 @@ def review_round(
             "note_id": item.note_id,
             "severity": item.severity if item.severity in ("low", "high") else "low",
             "category": item.category,
-            "message": item.message,
+            "message": item.message.strip()[:600],
             "action": None,
             "source": "model",
             "round_no": round_no,

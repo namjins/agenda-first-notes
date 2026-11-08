@@ -473,7 +473,7 @@ def run_review(
         report(0.75 + 0.2 * (r - 1) / max(rounds, 1), f"Adversarial review round {r} of {rounds}")
         try:
             notes, findings, material = pipeline.review_round(provider, settings, ws.id, tree, notes, text, tv_id, r)
-        except pipeline.PipelineError as e:
+        except (pipeline.PipelineError, ProviderError) as e:
             findings, material = (
                 [
                     {
