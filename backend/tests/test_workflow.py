@@ -61,7 +61,7 @@ def test_full_ward_council_workflow(client, fake_provider) -> None:  # type: ign
     assert tail == [
         "- Rowan Castellano will draft the rotation list by the fifteenth. [Owner: Rowan Castellano]",
         "- May or June proposed for the temple trip; no decision reached.",
-        "- Pat will look into the bus quote. [Owner: Pat]",
+        "- Pat will look into the bus quote.",  # "Pat" alone is not a full name: owner tag withheld
     ]
     # Approval blocked while a high finding is open.
     r = client.post(f"/api/w/{WC}/meetings/{mid}/approve")

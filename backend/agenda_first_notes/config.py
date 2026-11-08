@@ -84,7 +84,9 @@ def api_token() -> str:
 
 def _write_private(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)  # private from the first byte
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(text)
     try:
         path.chmod(0o600)
     except OSError:  # Windows/other filesystems without POSIX modes

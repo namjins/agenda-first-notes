@@ -28,10 +28,43 @@ def _norm_pattern(quote: str) -> re.Pattern[str]:
     return re.compile(r"\s+".join(parts), re.I)
 
 
+STOPWORDS = {
+    "the",
+    "a",
+    "an",
+    "and",
+    "or",
+    "but",
+    "yes",
+    "no",
+    "ok",
+    "okay",
+    "so",
+    "well",
+    "um",
+    "uh",
+    "to",
+    "of",
+    "in",
+    "it",
+    "is",
+    "that",
+    "this",
+    "we",
+    "i",
+}
+
+
+def substantive_quote(q: str) -> bool:
+    """A citation must be long enough to pin down a specific passage; stopword fragments verify nothing."""
+    words = re.findall(r"[A-Za-z0-9']+", q)
+    return len(q) >= 12 and len(words) >= 2 and any(w.lower() not in STOPWORDS for w in words)
+
+
 def locate(quote: str, text: str, offset: int = 0) -> tuple[int, int] | None:
     """Return (start, end) of quote in text as global offsets (text begins at `offset`)."""
     q = quote.strip().strip('"“”')
-    if len(q) < 3:
+    if not substantive_quote(q):
         return None
     i = text.find(q)
     if i == -1:
@@ -87,13 +120,14 @@ def revalidate(evidence: list[dict[str, Any]], full_text: str, transcript_versio
 
 
 def owner_supported(owner: str | None, evidence: list[dict[str, Any]]) -> bool:
+    """Owners need a full name (>= 2 tokens) with every token present as a whole word in the cited evidence."""
     if not owner:
         return True
-    tokens = [t for t in re.split(r"\s+", owner.strip()) if t]
-    if not tokens:
+    tokens = [t.strip(".,") for t in re.split(r"\s+", owner.strip()) if t.strip(".,")]
+    if len(tokens) < 2:
         return False
-    blob = " ".join(e["quote"] for e in evidence).lower()
-    return all(t.lower().strip(".,") in blob for t in tokens)
+    blob = " ".join(e["quote"] for e in evidence)
+    return all(re.search(rf"\b{re.escape(t)}\b", blob, re.I) for t in tokens)
 
 
 def looks_overconfident(text: str, category: str, uncertainty: str, evidence: list[dict[str, Any]]) -> bool:
@@ -109,12 +143,17 @@ def looks_overconfident(text: str, category: str, uncertainty: str, evidence: li
     return False
 
 
+NEGATIONS = {"not", "no", "never", "nt", "none", "without", "unclear", "declined"}
+
+
 def same_claim(a: str, b: str) -> bool:
-    na = re.sub(r"[^a-z0-9 ]", "", a.lower()).split()
-    nb = re.sub(r"[^a-z0-9 ]", "", b.lower()).split()
+    na = re.sub(r"[^a-z0-9 ]", "", a.lower().replace("n't", " nt")).split()
+    nb = re.sub(r"[^a-z0-9 ]", "", b.lower().replace("n't", " nt")).split()
     if not na or not nb:
         return False
     if na == nb:
         return True
+    if (set(na) & NEGATIONS) != (set(nb) & NEGATIONS):
+        return False  # "approved" vs "not approved" are different claims
     inter = len(set(na) & set(nb))
-    return inter / max(len(set(na)), len(set(nb))) >= 0.8
+    return inter / max(len(set(na)), len(set(nb))) >= 0.9  # near-identical only; distinct objects stay separate

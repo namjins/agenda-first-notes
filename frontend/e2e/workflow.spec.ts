@@ -34,7 +34,7 @@ test('full workflow: agenda → transcript → generate → review → approve �
   await page.getByRole('button', { name: 'Use this text' }).click()
   await expect(page.getByTestId('agenda-editor').getByRole('textbox')).toHaveCount(7)
   // Edit one heading in the tree, then approve.
-  await page.getByTestId('agenda-editor').getByRole('textbox').nth(4).fill('Elders Quorum ')
+  await page.getByTestId('agenda-editor').getByRole('textbox').nth(4).fill('Elders Quorum!')
   await page.getByTestId('approve-agenda').click()
   await expect(page.getByText(/approved — revision 2/)).toBeVisible()
 
@@ -46,7 +46,7 @@ test('full workflow: agenda → transcript → generate → review → approve �
   await expect(page.getByTestId('markdown')).toContainText('Next Meeting – Follow-Up Items')
   const md = await page.getByTestId('markdown').innerText()
   expect(md).toContain('- Organizations\n  - Relief Society\n    - Discussion indicated:')
-  expect(md).toContain('  - Elders Quorum \n    - Not discussed.')
+  expect(md).toContain('  - Elders Quorum!\n    - Not discussed.')
   expect(md).toContain('- Welcome\n  - Not discussed.')
   expect(md.indexOf('- Welcome')).toBeLessThan(md.indexOf('- Closing'))
 

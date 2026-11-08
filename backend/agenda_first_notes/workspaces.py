@@ -81,7 +81,7 @@ def get_workspace(workspace_id: str) -> Workspace:
     wid = validate_workspace_id(workspace_id)
     root = config.data_dir() / "workspaces" / wid
     for d in (root, root / "uploads", root / "references", root / "exports"):
-        d.mkdir(parents=True, exist_ok=True)
+        d.mkdir(parents=True, exist_ok=True, mode=0o700)
     return Workspace(id=wid, name=WORKSPACES[wid], root=root)
 
 

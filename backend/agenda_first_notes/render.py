@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Any
 
-from .agenda import AgendaNode
+from .agenda import AgendaNode, walk
 
 FOLLOW_UP_HEADING = "Next Meeting – Follow-Up Items"
 NO_FOLLOW_UPS = "No follow-up items identified."
@@ -25,8 +25,13 @@ def human_date(iso: str | None) -> str | None:
     return f"{d.strftime('%B')} {d.day}, {d.year}"
 
 
+def _flat(text: str) -> str:
+    """One line, no Markdown structure injection (a note or heading cannot start a new list/heading)."""
+    return " ".join(text.split())
+
+
 def bullet_text(note: dict[str, Any]) -> str:
-    text = note["text"].strip().rstrip()
+    text = _flat(note["text"])
     tags = []
     if note.get("follow_up"):
         tags.append("[Follow-up]")
@@ -67,7 +72,7 @@ def render(
 
     def emit(node: AgendaNode, depth: int) -> None:
         pad = "  " * depth
-        lines.append(f"{pad}- {node.text}")
+        lines.append(f"{pad}- {_flat(node.text)}")
         own = by_node.get(node.id, [])
         for n in own:
             lines.append(f"{pad}  - {bullet_text(n)}")
@@ -82,7 +87,7 @@ def render(
             emit(c, depth + 1)
 
     def emit_bare(node: AgendaNode, depth: int) -> None:
-        lines.append(f"{'  ' * depth}- {node.text}")
+        lines.append(f"{'  ' * depth}- {_flat(node.text)}")
         for c in node.children:
             emit_bare(c, depth + 1)
 
@@ -93,8 +98,9 @@ def render(
     lines.append(FOLLOW_UP_HEADING)
     items: list[str] = []
     seen: set[str] = set()
+    placed = {n.id for n, _ in walk(tree)}
     for n in sorted(
-        (n for n in notes if n.get("follow_up") and not n.get("deleted")),
+        (n for n in notes if n.get("follow_up") and not n.get("deleted") and n.get("agenda_node_id") in placed),
         key=lambda x: x.get("position", 0),
     ):
         t = bullet_text({**n, "follow_up": False})

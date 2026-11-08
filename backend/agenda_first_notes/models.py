@@ -69,6 +69,7 @@ TRANSITIONS: dict[str, set[str]] = {
         "ready_for_approval",
         "approved",
         "transcript_added",
+        "agenda_imported",
         "agenda_verified",
         "archived",
     },
@@ -79,10 +80,11 @@ TRANSITIONS: dict[str, set[str]] = {
         "transcript_added",
         "agenda_verified",
         "archived",
+        "agenda_imported",
     },
     "approved": {"ready_for_approval", "archived"},
     "archived": {"approved", "draft"},
-    "failed": {"processing", "transcript_added", "agenda_verified", "archived"},
+    "failed": {"processing", "transcript_added", "agenda_verified", "archived", "agenda_imported"},
 }
 
 
@@ -217,6 +219,9 @@ FOLLOW_UP_STATUSES = ["proposed", "open", "blocked", "deferred", "completed", "u
 
 
 class FollowUp(Stamped, Base):
+    source_note_id: Mapped[str | None] = mapped_column(
+        String(32)
+    )  # note this row was proposed from (idempotent re-approval)
     __tablename__ = "follow_ups"
     meeting_id: Mapped[str | None] = mapped_column(String(32), index=True)  # source meeting
     agenda_topic: Mapped[str | None] = mapped_column(Text)
@@ -244,6 +249,9 @@ class FollowUpEvent(Stamped, Base):
 
 
 class Decision(Stamped, Base):
+    source_note_id: Mapped[str | None] = mapped_column(
+        String(32)
+    )  # note this row was proposed from (idempotent re-approval)
     __tablename__ = "decisions"
     meeting_id: Mapped[str] = mapped_column(String(32), index=True)
     agenda_topic: Mapped[str | None] = mapped_column(Text)
@@ -268,6 +276,9 @@ CALLING_EVENTS = [
 
 
 class CallingEvent(Stamped, Base):
+    source_note_id: Mapped[str | None] = mapped_column(
+        String(32)
+    )  # note this row was proposed from (idempotent re-approval)
     __tablename__ = "calling_events"
     meeting_id: Mapped[str | None] = mapped_column(String(32), index=True)
     person: Mapped[str | None] = mapped_column(String(120))  # may be None/unclear
@@ -279,6 +290,9 @@ class CallingEvent(Stamped, Base):
 
 
 class ScheduledEvent(Stamped, Base):
+    source_note_id: Mapped[str | None] = mapped_column(
+        String(32)
+    )  # note this row was proposed from (idempotent re-approval)
     __tablename__ = "scheduled_events"
     meeting_id: Mapped[str | None] = mapped_column(String(32), index=True)
     title: Mapped[str] = mapped_column(Text)

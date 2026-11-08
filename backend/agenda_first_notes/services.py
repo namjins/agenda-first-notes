@@ -7,7 +7,7 @@ from collections.abc import Callable
 from datetime import date
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from . import config, evidence, pipeline, render
@@ -124,6 +124,12 @@ def update_meeting(
         if meeting_date is not UNSET:
             m.meeting_date = _validate_date(meeting_date)
         if carry_forward is not None:
+            allowed = {c["follow_up_id"] for c in _undiscussed(s, m)}
+            bad = [x for x in carry_forward if str(x) not in allowed]
+            if bad:
+                raise ServiceError(
+                    "Only open follow-ups listed on this agenda and not discussed can be carried forward."
+                )
             m.carry_forward = [str(x) for x in carry_forward][:200]
         s.commit()
         return m
@@ -132,15 +138,17 @@ def update_meeting(
 def delete_meeting(ws: Workspace, meeting_id: str) -> None:
     with session_for(ws) as s:
         m = get_meeting(s, meeting_id)
-        for table in (ReviewFinding, NotesRevision, Decision, CallingEvent, ScheduledEvent):
+        removed: dict[str, list[str]] = {}
+        for table in (ReviewFinding, NotesRevision, Decision, CallingEvent, ScheduledEvent, FollowUp):
             for row in s.scalars(select(table).where(table.meeting_id == meeting_id)):
+                removed.setdefault(str(table.__tablename__), []).append(str(getattr(row, "id")))  # noqa: B009
                 s.delete(row)
         audit(
             s,
             "meeting",
             meeting_id,
             "deleted",
-            prev={"title": m.title, "date": m.meeting_date},
+            prev={"title": m.title, "date": m.meeting_date, "history_rows": removed},
             source="user",
         )
         s.delete(m)
@@ -372,6 +380,18 @@ def process_meeting(
                 )
             _save_coverage(ws, meeting_id, segs)
         notes = pipeline.dedupe(all_notes)
+        with session_for(ws) as s:
+            # Any user-touched note (edited, untagged, moved or deleted) wins over a fresh model note making the
+            # same claim on the same agenda item; otherwise regeneration would resurrect or duplicate it.
+            suppressed = [
+                (x.agenda_node_id, x.text)
+                for x in s.scalars(select(Note).where(Note.meeting_id == meeting_id, Note.origin == "user"))
+            ]
+        notes = [
+            n
+            for n in notes
+            if not any(n["agenda_node_id"] == nid and evidence.same_claim(n["text"], t) for nid, t in suppressed)
+        ]
         for i, nd in enumerate(notes):
             nd["position"] = i
         with session_for(ws) as s:
@@ -605,8 +625,8 @@ def edit_note(ws: Workspace, meeting_id: str, note_id: str | None, data: dict[st
         if "evidence_quotes" in data and tv is not None:
             ev, _bad = evidence.validate_quotes(list(data["evidence_quotes"]), tv.text, 0, tv.id)
             n.evidence = ev
+        n.origin = "user"  # any edit (delete, move, untag included) is a user decision regeneration must respect
         if text_changed or not note_id or "evidence_quotes" in data or ("owner" in data and n.owner):
-            n.origin = "user"
             n.stale = False
             owner_ok = evidence.owner_supported(n.owner, n.evidence)
             n.status = "user_edited" if (n.evidence and owner_ok) else "manual_unverified"
@@ -626,8 +646,6 @@ def edit_note(ws: Workspace, meeting_id: str, note_id: str | None, data: dict[st
             source="user",
             meeting_id=meeting_id,
         )
-        if m.state == "approved":
-            transition(m, "ready_for_approval")
         s.commit()
         s.refresh(n)
         return n
@@ -661,7 +679,7 @@ def _render(s: Session, ws: Workspace, m: Meeting, *, include_unverified: bool) 
     ]
     extra = []
     if m.carry_forward:
-        for fu in s.scalars(select(FollowUp).where(FollowUp.id.in_(m.carry_forward))):
+        for fu in s.scalars(select(FollowUp).where(FollowUp.id.in_(m.carry_forward), FollowUp.status != "completed")):
             extra.append(fu.description)
     complete = bool((m.coverage or {}).get("complete"))
     return render.render(
@@ -747,16 +765,21 @@ def _propose_history(s: Session, m: Meeting, rev: NotesRevision) -> None:
     """
     agenda = current_agenda(s, m.id, approved_only=True)
     texts = {n.id: n.text for n, _ in walk(from_dicts(agenda.tree))} if agenda else {}
+
+    def exists(table: Any, note_id: str) -> bool:
+        return (
+            s.scalars(select(table).where(table.meeting_id == m.id, table.source_note_id == note_id)).first()
+            is not None
+        )
+
     for n in rev.notes_snapshot:
-        if n["deleted"] or n["status"] in ("unsupported",):
+        if n["deleted"] or n["status"] in ("unsupported",) or not n["agenda_node_id"]:
             continue
         topic = texts.get(n["agenda_node_id"] or "")
         origin = "transcript" if n["evidence"] and n["origin"] == "model" else "user"
-        if n["follow_up"]:
-            dup = s.scalars(select(FollowUp).where(FollowUp.meeting_id == m.id)).all()
-            if any(evidence.same_claim(d.description, n["text"]) for d in dup):
-                continue
+        if n["follow_up"] and not exists(FollowUp, n["id"]):
             fu = FollowUp(
+                source_note_id=n["id"],
                 meeting_id=m.id,
                 agenda_topic=topic,
                 description=n["text"],
@@ -787,7 +810,7 @@ def _propose_history(s: Session, m: Meeting, rev: NotesRevision) -> None:
                 source=origin,
                 meeting_id=m.id,
             )
-        if n["category"] in ("decision", "proposed_decision"):
+        if n["category"] in ("decision", "proposed_decision") and not exists(Decision, n["id"]):
             status = (
                 "confirmed"
                 if n["category"] == "decision" and n["uncertainty"] == "low" and origin == "transcript"
@@ -796,6 +819,7 @@ def _propose_history(s: Session, m: Meeting, rev: NotesRevision) -> None:
             if origin == "user":
                 status = "unverified"
             d = Decision(
+                source_note_id=n["id"],
                 meeting_id=m.id,
                 agenda_topic=topic,
                 text=n["text"],
@@ -814,8 +838,9 @@ def _propose_history(s: Session, m: Meeting, rev: NotesRevision) -> None:
                 source=origin,
                 meeting_id=m.id,
             )
-        if n["category"] == "calling_event" and n["calling_event"]:
+        if n["category"] == "calling_event" and n["calling_event"] and not exists(CallingEvent, n["id"]):
             ce = CallingEvent(
+                source_note_id=n["id"],
                 meeting_id=m.id,
                 person=None,
                 calling=topic,
@@ -835,8 +860,9 @@ def _propose_history(s: Session, m: Meeting, rev: NotesRevision) -> None:
                 source=origin,
                 meeting_id=m.id,
             )
-        if n["category"] == "date":
+        if n["category"] == "date" and not exists(ScheduledEvent, n["id"]):
             se = ScheduledEvent(
+                source_note_id=n["id"],
                 meeting_id=m.id,
                 title=n["text"],
                 event_date=None,
@@ -865,38 +891,43 @@ def undiscussed_agenda_follow_ups(ws: Workspace, meeting_id: str) -> list[dict[s
     Matching is lexical and advisory; the user decides whether to carry an item forward.
     """
     with session_for(ws) as s:
-        m = get_meeting(s, meeting_id)
-        rev = current_agenda(s, meeting_id, approved_only=True)
-        if rev is None:
-            return []
-        discussed = {
-            n.agenda_node_id
-            for n in s.scalars(select(Note).where(Note.meeting_id == meeting_id, Note.deleted.is_(False)))
-        }
-        open_items = s.scalars(
-            select(FollowUp).where(
-                FollowUp.status.in_(["open", "proposed", "blocked", "deferred", "unverified"]),
-                FollowUp.meeting_id != meeting_id,
-            )
-        ).all()
-        out = []
-        for node, _ in walk(from_dicts(rev.tree)):
-            if node.id in discussed or node.children:
-                continue
-            for fu in open_items:
-                if (
-                    evidence.same_claim(node.text, fu.description)
-                    or node.text.lower() in fu.description.lower()
-                    or (fu.agenda_topic and fu.agenda_topic.lower() == node.text.lower())
-                ):
-                    out.append(
-                        {
-                            "agenda_node_id": node.id,
-                            "agenda_text": node.text,
-                            "follow_up_id": fu.id,
-                            "description": fu.description,
-                            "status": fu.status,
-                            "selected": fu.id in (m.carry_forward or []),
-                        }
-                    )
-        return out
+        return _undiscussed(s, get_meeting(s, meeting_id))
+
+
+def _undiscussed(s: Session, m: Meeting) -> list[dict[str, Any]]:
+    rev = current_agenda(s, m.id, approved_only=True)
+    if rev is None:
+        return []
+    discussed = {
+        n.agenda_node_id
+        for n in s.scalars(
+            select(Note).where(Note.meeting_id == m.id, Note.deleted.is_(False), Note.status != "unsupported")
+        )
+    }
+    open_items = s.scalars(
+        select(FollowUp).where(
+            FollowUp.status.in_(["open", "proposed", "blocked", "deferred", "unverified"]),
+            or_(FollowUp.meeting_id.is_(None), FollowUp.meeting_id != m.id),
+        )
+    ).all()
+    out = []
+    for node, _ in walk(from_dicts(rev.tree)):
+        if node.id in discussed or node.children:
+            continue
+        for fu in open_items:
+            if (
+                evidence.same_claim(node.text, fu.description)
+                or node.text.lower() in fu.description.lower()
+                or (fu.agenda_topic and fu.agenda_topic.lower() == node.text.lower())
+            ):
+                out.append(
+                    {
+                        "agenda_node_id": node.id,
+                        "agenda_text": node.text,
+                        "follow_up_id": fu.id,
+                        "description": fu.description,
+                        "status": fu.status,
+                        "selected": fu.id in (m.carry_forward or []),
+                    }
+                )
+    return out

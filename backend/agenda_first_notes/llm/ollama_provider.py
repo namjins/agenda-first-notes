@@ -22,7 +22,9 @@ def assert_local_host(host: str) -> str:
 class OllamaProvider:
     def __init__(self, host: str) -> None:
         self.host = assert_local_host(host)
-        self._client = ollama.Client(host=self.host, timeout=600)
+        # trust_env=False: ignore HTTP(S)_PROXY / OS proxy settings, which httpx would otherwise apply even to
+        # loopback URLs; follow_redirects=False: never let a 3xx send the transcript somewhere else.
+        self._client = ollama.Client(host=self.host, timeout=600, trust_env=False, follow_redirects=False)
 
     def health(self) -> dict[str, Any]:
         try:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
@@ -25,7 +26,7 @@ from .models import (
     ReviewFinding,
     TranscriptVersion,
 )
-from .workspaces import WORKSPACES, UnknownWorkspace, Workspace, get_workspace, session_for
+from .workspaces import WORKSPACES, UnknownWorkspace, Workspace, get_workspace, safe_filename, session_for
 
 router = APIRouter(prefix="/api")
 
@@ -347,7 +348,7 @@ def propose_agenda(ws: WS, meeting_id: str) -> dict[str, Any]:
 
 
 @router.post("/w/{workspace_id}/agenda/parse")
-def parse_agenda_text(body: dict[str, str]) -> dict[str, Any]:
+def parse_agenda_text(ws: WS, body: dict[str, str]) -> dict[str, Any]:
     return {"tree": to_dicts(parse_text(body.get("text", "")))}
 
 
@@ -712,9 +713,14 @@ async def upload_reference(ws: WS, file: UploadFile = File(...)) -> dict[str, An
         )
         s.add(doc)
         s.flush()
-        ws.file_path(ws.references, f"{doc.id}_{file.filename or 'doc'}").write_bytes(data)
+        _reference_path(ws, doc.id, doc.filename).write_bytes(data)
         s.commit()
         return {k: v for k, v in _dump(doc).items() if k != "text"} | {"length": len(text)}
+
+
+def _reference_path(ws: Workspace, doc_id: str, filename: str) -> Path:
+    # Sanitize the client part first so a separator in it cannot strip the server-side id prefix.
+    return ws.file_path(ws.references, f"{doc_id}_{safe_filename(filename)}")
 
 
 @router.get("/w/{workspace_id}/references/{doc_id}")
@@ -732,8 +738,7 @@ def delete_reference(ws: WS, doc_id: str) -> None:
         d = s.get(ReferenceDocument, doc_id)
         if d is None:
             raise HTTPException(404, "not found")
-        for f in ws.references.glob(f"{doc_id}_*"):
-            f.unlink(missing_ok=True)
+        _reference_path(ws, d.id, d.filename).unlink(missing_ok=True)
         s.delete(d)
         s.commit()
 

@@ -11,11 +11,11 @@ Hand-off record for continuing work across sessions. Update when a milestone or 
 | 3 Evidence & review | Done | Segmentation with offsets/coverage, quote validation, owner/over-confidence checks, model review rounds with actions, user edits preserved and labelled, approval with immutable revision, transcript corrections → stale notes. |
 | 4 Historical intelligence | Done | Follow-up inbox (statuses, events, Prepare Next Agenda), decisions, calling events (independent, admin entry), scheduled-event date supersession, append-only audit, FTS5 search, Case A/B/C handling. |
 | 5 Usability | Done (v1 level) | Autosave (debounced transcript, title/date, agenda), resume, job progress/cancel/retry, model settings + synthetic test inference, shortcuts (1–7, w, g, a, c, ?), light/dark, error boxes. |
-| 6 Hardening | In progress | Docs written. Real-model run with qwen3.6:35b-a3b exercised the pipeline; found and fixed: reasoning models returning empty content (now `think=False`), optional schema fields omitted (now all-required schema), failed segments invisible (now a high finding). Final adversarial reviews A–G: see below. |
+| 6 Hardening | Done for v1 | Docs written. Real-model run with qwen3.6:35b-a3b exercised the pipeline; found and fixed: reasoning models returning empty content (now `think=False`), optional schema fields omitted (now all-required schema), failed segments invisible (now a high finding). Adversarial reviews A–G done; all material findings fixed (see below). |
 
 ## What was actually verified (macOS, M2 Ultra, 2026-11-08)
 
-- `uv run pytest -q`: 26 passed, 1 skipped (real-model test skipped without `AFN_REAL_MODEL`).
+- `uv run pytest -q`: 33 passed, 1 skipped (real-model test skipped without `AFN_REAL_MODEL`).
 - `ruff check`, `ruff format --check`, `mypy`: clean.
 - `npm run typecheck`, `npm test` (4 unit tests), `npm run build`: clean.
 - `npm run e2e`: 3 Playwright tests passed in Chromium against the real backend (`AFN_PROVIDER=fake`): token gate, full workflow incl. agenda edit/approve, transcript autosave, generation, evidence highlight, manual edit labelling, approval, clipboard copy, history, workspace isolation in UI/search, dark mode, settings.
@@ -64,6 +64,34 @@ Invariants asserted in every run: all stored evidence offsets match the original
 | 24 | Verify user data is outside the repository | ✔ | `assert_outside_repo` test; `paths` command; audit |
 
 Demonstrations (Section 29 list): ward council with agenda ✔ (fixture), bishopric with agenda ✔ (isolation test), bishopric without agenda ✔ (propose + calling states test), nested agenda ✔, undiscussed item ✔, overlapping speakers ✔ (fixture crosstalk → "unclear who"), ambiguous name ✔ (owner stripped), proposed-but-unapproved calling ✔ (`suggested` only), explicit assignment ✔, unresolved question ✔, historical follow-up absent from transcript ✔ (Case B/C test), event date changed ✔, unsupported historical fact excluded ✔ (prompt-content assertions), long transcript without loss ✔ (segment test), flat follow-up list ✔, Markdown indentation ✔ (golden test).
+
+## Adversarial implementation reviews (Section 33)
+
+Two independent read-only reviewer agents (security/isolation; accuracy/agenda/history) plus manual passes for functional (A) and cross-platform (G). Every material finding was fixed and, where behavioral, pinned by a test.
+
+Security / isolation (E, F) — isolation held (no cross-workspace path found). Fixed:
+- Ollama HTTP client honoured `HTTP_PROXY`/OS proxy and followed redirects → `trust_env=False, follow_redirects=False`.
+- Agenda images requested with the token in the URL (and 401'd) → authenticated fetch + blob URL.
+- SQLite files world-readable under default umask → `umask 077`, 0700 dirs, 0600 files/token.
+- Reference uploads with path separators lost the server id prefix (orphan on delete, overwrite) → sanitize client name first.
+- Large uploads spooled to shared OS temp → private `tmp/` in the data dir; 60 MB body cap.
+- Repo audit missed `-wal/-shm/.bak`, bare `api_token`, data files under `docs/`, unmarked `.json/.csv` fixtures → rules hardened.
+- Minor: parse route now validates workspace; token compare on bytes; IPv6 Host parsing tightened; model output excluded from error text.
+
+Accuracy / agenda / history (B, C, D). Fixed:
+- Dedupe merged contradictory or distinct claims → requires same category and calling event, negation-aware, 0.9 overlap.
+- Re-approval duplicated decisions/callings/events → `source_note_id` on history rows (migration 0002), idempotent proposals.
+- `carry_forward` accepted any follow-up (Case C, completed) → validated against Case B candidates; completed excluded.
+- Case B missed manually created follow-ups (NULL `meeting_id`) → NULL-safe query.
+- Orphaned/unmapped follow-up notes reached the final list with no finding → high finding; final list only from placed notes; structural checks now run for user notes too.
+- User delete/untag/move of a model note was undone by regeneration → every edit marks the note user-origin; user notes take precedence over same-claim model notes on regeneration.
+- Single-token / substring owners passed → full name (≥2 tokens), whole-word match. (`[Owner: Pat]` is now withheld by design.)
+- 3-character quotes counted as evidence → quotes need ≥12 chars, ≥2 words, not all stopwords.
+- Deleting a meeting orphaned follow-ups and skipped audit → deletes its follow-ups too and audits the removed ids.
+- Reviewer `add` with high uncertainty stored as verified → stored as `uncertain`.
+- Minor: Markdown/newline injection in note or heading text collapsed; NBSP indentation; agenda edits allowed from review states.
+
+Not fixed (documented limitations, ROADMAP): `looks_overconfident` is lexical; `set_event_date` can create two superseders; `revalidate_notes` re-raises dismissed round-99 findings; Decision `confirmed` is set automatically for low-uncertainty model decisions.
 
 ## Remaining / next steps
 

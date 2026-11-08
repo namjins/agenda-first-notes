@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -18,12 +20,27 @@ FRONTEND_DIST = config.REPO_ROOT / "frontend" / "dist"
 
 
 def init_storage() -> None:
+    os.umask(0o077)  # everything we create (SQLite, WAL, uploads) is user-only where the OS supports modes
     d = config.data_dir()
     config.assert_outside_repo(d)
+    tmp = d / "tmp"
+    tmp.mkdir(parents=True, exist_ok=True)
+    tempfile.tempdir = str(tmp)  # multipart uploads > 1 MB are spooled here, not in the shared OS temp dir
+    for path in (d, tmp):
+        _private(path)
     for wid in WORKSPACES:
         ws = get_workspace(wid)
         db.migrate(ws)
         jobs.recover_interrupted(ws)
+        for path in (ws.root, ws.uploads, ws.references, ws.exports, *ws.root.glob("notes.sqlite3*")):
+            _private(path)
+
+
+def _private(path: Path) -> None:
+    try:
+        path.chmod(0o700 if path.is_dir() else 0o600)
+    except OSError:
+        pass
 
 
 @asynccontextmanager

@@ -15,6 +15,8 @@ def test_locate_exact_and_whitespace_tolerant() -> None:
     assert text[s - 100 : e - 100].startswith("adopt") and text[s - 100 : e - 100].endswith("rotation")
     assert locate("invented quotation", text) is None
     assert locate("we", text) is None  # too short to count as evidence
+    assert locate("Yes, the and", "Yes, the and so on it is") is None  # stopword fragments verify nothing
+    assert locate("No decision today.", "x No decision today. y") is not None
 
 
 def test_validate_rejects_invented_and_keeps_offsets() -> None:
@@ -32,6 +34,8 @@ def test_owner_and_overconfidence_checks() -> None:
     assert owner_supported("Rowan Castellano", ev)
     assert not owner_supported("Avery Lindqvist", ev)
     assert owner_supported(None, [])
+    assert not owner_supported("Pat", [{"quote": "Pat, could you look into it?"}])  # single token is not a full name
+    assert not owner_supported("Ann Lee", [{"quote": "Dan Lee and Annabelle spoke"}])  # whole words only
     assert looks_overconfident(
         "Activity days will be moved.",
         "decision",
@@ -56,6 +60,8 @@ def test_owner_and_overconfidence_checks() -> None:
 def test_same_claim() -> None:
     assert same_claim("Draft the rotation list.", "draft the rotation list")
     assert not same_claim("Draft the rotation list.", "Book the bus for youth conference")
+    assert not same_claim("Budget approved for the youth activity.", "Budget not approved for the youth activity.")
+    assert not same_claim("Budget was approved.", "Budget wasn't approved.")
 
 
 def test_reviewer_cannot_dispute_a_name_present_in_verified_evidence() -> None:

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hmac
 import os
+import re
 from urllib.parse import urlparse
 
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -20,10 +21,14 @@ from starlette.responses import JSONResponse, Response
 LOOPBACK = {"127.0.0.1", "localhost", "::1", "[::1]"}
 
 
+MAX_BODY_BYTES = 60 * 1024 * 1024
+
+
 def _host_only(value: str) -> str:
     host = value.strip()
     if host.startswith("["):
-        return host.split("]")[0] + "]"
+        bracket, _, rest = host.partition("]")
+        return bracket + "]" if rest == "" or re.fullmatch(r":\d+", rest) else host
     return host.rsplit(":", 1)[0] if host.count(":") == 1 else host
 
 
@@ -49,10 +54,13 @@ class LocalOnlyMiddleware(BaseHTTPMiddleware):
             return JSONResponse({"detail": "Host not allowed"}, status_code=400)
         if not origin_allowed(request.headers.get("origin"), self.extra_origins):
             return JSONResponse({"detail": "Origin not allowed"}, status_code=403)
+        length = request.headers.get("content-length")
+        if length and length.isdigit() and int(length) > MAX_BODY_BYTES:
+            return JSONResponse({"detail": "Request body too large"}, status_code=413)
         path = request.url.path
         if path.startswith("/api/") and path != "/api/health":
-            supplied = request.headers.get("x-afn-token", "")
-            if not hmac.compare_digest(supplied, self.token):
+            supplied = request.headers.get("x-afn-token", "").encode("utf-8", "replace")
+            if not hmac.compare_digest(supplied, self.token.encode("utf-8")):
                 return JSONResponse(
                     {"detail": "Missing or invalid API token. Open the app via the URL printed at launch."},
                     status_code=401,

@@ -30,7 +30,7 @@ def parse_text(text: str) -> list[AgendaNode]:
     for raw in text.splitlines():
         if not raw.strip():
             continue
-        line = raw.replace("\t", "    ")
+        line = raw.replace("\t", "    ").replace("\u00a0", " ")
         indent = len(line) - len(line.lstrip(" "))
         content = _BULLET.sub("", line.strip(), count=1).strip() or line.strip()
         node = AgendaNode(text=content)

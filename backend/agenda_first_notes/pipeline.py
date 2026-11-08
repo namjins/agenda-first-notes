@@ -96,7 +96,7 @@ def _parse(model: type[BaseModel], raw: str) -> Any:
                 return model.model_validate_json(raw[start : end + 1])
             except ValidationError:
                 pass
-        raise PipelineError(f"Model returned invalid JSON: {e.errors()[:1]}") from e
+        raise PipelineError(f"Model returned invalid JSON: {e.errors(include_input=False)[:1]}") from e
 
 
 def note_dict(f: Finding, ev: list[dict[str, Any]], status: str) -> dict[str, Any]:
@@ -237,7 +237,12 @@ def dedupe(notes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for n in notes:
         dup = False
         for k in kept:
-            if k["agenda_node_id"] == n["agenda_node_id"] and evidence.same_claim(k["text"], n["text"]):
+            if (
+                k["agenda_node_id"] == n["agenda_node_id"]
+                and k["category"] == n["category"]
+                and k["calling_event"] == n["calling_event"]
+                and evidence.same_claim(k["text"], n["text"])
+            ):
                 dup = True
                 if n["follow_up"]:
                     k["follow_up"] = True
@@ -258,61 +263,39 @@ def deterministic_checks(notes: list[dict[str, Any]], tree: list[AgendaNode]) ->
         if n.get("deleted"):
             continue
         nid = n.get("id")
-        if n["origin"] == "user":
-            if n["status"] == "manual_unverified":
-                out.append(
-                    _finding(
-                        nid,
-                        "info",
-                        "manual",
-                        "Manual addition; not verified against the transcript.",
-                        None,
-                    )
-                )
-            continue
+        # Structural checks apply to every note, including user-written ones.
         if n["agenda_node_id"] is not None and n["agenda_node_id"] not in valid_ids:
             out.append(
+                _finding(nid, "high", "wrong_placement", "Note points at an agenda node that no longer exists.", None)
+            )
+        if n["agenda_node_id"] is None and tree:
+            sev = "high" if n.get("follow_up") else "low"
+            out.append(
                 _finding(
-                    nid,
-                    "high",
-                    "wrong_placement",
-                    "Note points at an agenda node that no longer exists.",
-                    None,
+                    nid, sev, "unmapped", "Not placed under an agenda item; it will not be rendered until it is.", None
                 )
             )
-        if not n["evidence"] and n["status"] != "manual_unverified":
-            out.append(_finding(nid, "high", "unsupported", "No evidence attached.", None))
-        if n.get("owner") and not evidence.owner_supported(n["owner"], n["evidence"]):
-            out.append(_finding(nid, "high", "inferred_owner", "Owner is not named in the cited evidence.", None))
         if n.get("stale"):
             out.append(
                 _finding(
-                    nid,
-                    "high",
-                    "stale",
-                    "Source transcript changed since this note was verified.",
-                    None,
+                    nid, "high", "stale", "Source transcript or agenda changed since this note was verified.", None
                 )
+            )
+        if n["origin"] == "user":
+            if n["status"] == "manual_unverified":
+                out.append(
+                    _finding(nid, "info", "manual", "Manual addition; not verified against the transcript.", None)
+                )
+            continue
+        if not n["evidence"]:
+            out.append(_finding(nid, "high", "unsupported", "No evidence attached.", None))
+        if n.get("owner") and not evidence.owner_supported(n["owner"], n["evidence"]):
+            out.append(
+                _finding(nid, "high", "inferred_owner", "Owner is not a full name present in the cited evidence.", None)
             )
         if evidence.looks_overconfident(n["text"], n["category"], n["uncertainty"], n["evidence"]):
             out.append(
-                _finding(
-                    nid,
-                    "high",
-                    "overconfident",
-                    "Wording is more certain than the evidence supports.",
-                    None,
-                )
-            )
-        if n["agenda_node_id"] is None and tree:
-            out.append(
-                _finding(
-                    nid,
-                    "low",
-                    "unmapped",
-                    "Substantive discussion not mapped to an agenda item.",
-                    None,
-                )
+                _finding(nid, "high", "overconfident", "Wording is more certain than the evidence supports.", None)
             )
     return out
 
@@ -396,7 +379,7 @@ def review_round(
                         evidence=[],
                     ),
                     ev,
-                    "verified",
+                    "uncertain" if item.new_uncertainty == "high" else "verified",
                 )
                 new["position"] = len(notes)
                 notes.append(new)

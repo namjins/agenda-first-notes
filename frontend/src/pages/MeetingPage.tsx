@@ -7,6 +7,20 @@ import AgendaEditor from '../components/AgendaEditor'
 import ReviewPanel from '../components/ReviewPanel'
 import { ErrorBox, Section, StateTag, copyText, fmtDate, useAsync } from '../components/ui'
 
+// Images are fetched with the token header and shown as blob URLs; the token never goes into a URL.
+function AuthImage({ src }: { src: string }) {
+  const [url, setUrl] = useState<string | null>(null)
+  useEffect(() => {
+    let obj: string | null = null
+    fetch(src, { headers: { 'X-AFN-Token': sessionStorage.getItem('afn_token') ?? '' } })
+      .then((r) => (r.ok ? r.blob() : Promise.reject(new Error(String(r.status)))))
+      .then((b) => { obj = URL.createObjectURL(b); setUrl(obj) })
+      .catch(() => setUrl(null))
+    return () => { if (obj) URL.revokeObjectURL(obj) }
+  }, [src])
+  return url ? <img alt="Agenda screenshot" className="h-40 rounded border" style={{ borderColor: 'var(--line)' }} src={url} /> : null
+}
+
 const STEPS = ['Agenda', 'Transcript', 'Generate', 'Review', 'Approve', 'Copy / Export']
 
 function stepIndex(m: Meeting): number {
@@ -182,7 +196,7 @@ function MeetingWorkflow({ id }: { id: string }) {
                   <label className="btn ml-2 cursor-pointer">choose files<input type="file" accept="image/png,image/jpeg,image/webp" multiple className="hidden" onChange={(e) => Array.from(e.target.files ?? []).forEach(uploadImage)} /></label>
                 </div>
                 {imageInfo && <p className="muted mt-2 text-xs">{imageInfo}</p>}
-                {m.images.length > 0 && <div className="mt-2 flex flex-wrap gap-2">{m.images.map((img) => <img key={img.id} alt="Agenda screenshot" className="h-40 rounded border" style={{ borderColor: 'var(--line)' }} src={api.w(ws, `/meetings/${id}/agenda/images/${img.id}`) + `?t=${sessionStorage.getItem('afn_token')}`} onError={(e) => ((e.target as HTMLImageElement).style.display = 'none')} />)}</div>}
+                {m.images.length > 0 && <div className="mt-2 flex flex-wrap gap-2">{m.images.map((img) => <AuthImage key={img.id} src={api.w(ws, `/meetings/${id}/agenda/images/${img.id}`)} />)}</div>}
               </div>
             )}
             {agendaMode === 'text' && (

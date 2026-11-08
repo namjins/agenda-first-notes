@@ -12,28 +12,15 @@ from pathlib import Path
 
 from .config import REPO_ROOT
 
-SUSPICIOUS_SUFFIXES = {
-    ".sqlite",
-    ".sqlite3",
-    ".db",
-    ".db-wal",
-    ".db-shm",
-    ".pem",
-    ".key",
-    ".p12",
-    ".pfx",
-    ".env",
-    ".heic",
-    ".docx",
-    ".pdf",
-    ".zip",
-    ".log",
-}
-SUSPICIOUS_NAMES = re.compile(
-    r"(transcript|agenda|minutes|roster|membership|members|export|backup|api_token|settings\.json)",
-    re.I,
-)
-ALLOWED_DIRS = ("backend/tests/fixtures/", "docs/", "frontend/e2e/fixtures/")
+SUSPICIOUS_SUFFIXES = (
+    ".sqlite", ".sqlite3", ".sqlite3-wal", ".sqlite3-shm", ".db", ".db-wal", ".db-shm", ".bak",
+    ".pem", ".key", ".p12", ".pfx", ".env", ".heic", ".docx", ".pdf", ".zip", ".log",
+)  # fmt: skip
+SUSPICIOUS_BARE_NAMES = {"api_token", "settings.json", ".env"}
+SUSPICIOUS_NAMES = re.compile(r"(transcript|agenda|minutes|roster|membership|members|export|backup)", re.I)
+FIXTURE_DIRS = ("backend/tests/fixtures/", "frontend/e2e/fixtures/")  # may hold data-like files, synthetic only
+NAME_EXEMPT_DIRS = (*FIXTURE_DIRS, "docs/")  # documentation may mention agendas/transcripts in file names
+MARKER_SUFFIXES = {".txt", ".json", ".csv"}
 SECRET_PATTERNS = [
     re.compile(r"(?i)(api[_-]?key|secret|token|password)\s*[:=]\s*['\"][A-Za-z0-9_\-]{16,}['\"]"),
     re.compile(r"sk-[A-Za-z0-9]{20,}"),
@@ -42,6 +29,7 @@ SECRET_PATTERNS = [
 ]
 MAX_BYTES = 2 * 1024 * 1024
 REQUIRED_FIXTURE_MARKER = "SYNTHETIC"
+BINARY_OK = {".png", ".jpg", ".jpeg", ".webp", ".pyc", ".woff", ".woff2", ".ico"}
 
 
 def _files(staged_only: bool) -> list[Path]:
@@ -53,31 +41,26 @@ def _files(staged_only: bool) -> list[Path]:
 def audit_paths(paths: list[Path]) -> list[str]:
     problems: list[str] = []
     for path in paths:
-        rel = path.relative_to(REPO_ROOT).as_posix()
         if not path.exists() or path.is_dir():
             continue
-        if path.suffix.lower() in SUSPICIOUS_SUFFIXES and not rel.startswith(ALLOWED_DIRS):
+        rel = path.relative_to(REPO_ROOT).as_posix()
+        name = path.name.lower()
+        suffix = path.suffix.lower()
+        if name in SUSPICIOUS_BARE_NAMES and not rel.startswith("frontend/"):
+            problems.append(f"{rel}: runtime file must not be committed")
+        if name.endswith(SUSPICIOUS_SUFFIXES) and not rel.startswith(FIXTURE_DIRS):
             problems.append(f"{rel}: file type {path.suffix} is not allowed in the repository")
         if (
             SUSPICIOUS_NAMES.search(path.name)
-            and not rel.startswith(ALLOWED_DIRS)
-            and path.suffix.lower() in {".txt", ".md", ".json", ".csv", ".png", ".jpg", ".jpeg", ".webp"}
+            and not rel.startswith(NAME_EXEMPT_DIRS)
+            and suffix in {".txt", ".md", ".json", ".csv", *BINARY_OK}
         ):
             problems.append(
                 f"{rel}: name suggests meeting/member data; move it out of the repo or into a synthetic fixtures folder"
             )
         if path.stat().st_size > MAX_BYTES:
             problems.append(f"{rel}: larger than 2 MB")
-        if path.suffix.lower() in {
-            ".png",
-            ".jpg",
-            ".jpeg",
-            ".webp",
-            ".pyc",
-            ".woff",
-            ".woff2",
-            ".ico",
-        }:
+        if suffix in BINARY_OK:
             continue
         try:
             text = path.read_text("utf-8")
@@ -87,12 +70,10 @@ def audit_paths(paths: list[Path]) -> list[str]:
             if pat.search(text):
                 problems.append(f"{rel}: looks like it contains a secret ({pat.pattern[:30]}...)")
                 break
-        if (
-            rel.startswith("backend/tests/fixtures/")
-            and path.suffix.lower() in {".txt", ".md"}
-            and REQUIRED_FIXTURE_MARKER not in text
-        ):
-            problems.append(f"{rel}: fixture lacks the '{REQUIRED_FIXTURE_MARKER}' marker proving it is fictional")
+        if rel.startswith(NAME_EXEMPT_DIRS) and suffix in MARKER_SUFFIXES and REQUIRED_FIXTURE_MARKER not in text:
+            problems.append(
+                f"{rel}: fixture/data file lacks the '{REQUIRED_FIXTURE_MARKER}' marker proving it is fictional"
+            )
     return problems
 
 
