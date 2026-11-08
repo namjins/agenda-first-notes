@@ -65,16 +65,20 @@ class OllamaProvider:
             "stream": False,
         }
         try:
+            # Reasoning models otherwise spend the whole output budget on hidden thinking and return "".
+            # Some models reject or misbehave with think=False, so fall back to the plain call.
             try:
-                # Reasoning models otherwise spend the whole output budget on hidden thinking and return "".
                 resp = self._client.chat(**kwargs, think=False)
             except ollama.ResponseError as e:
                 if "think" not in str(e).lower():
                     raise
                 resp = self._client.chat(**kwargs)
+            content = resp.message.content or ""
+            if not content.strip():
+                resp = self._client.chat(**kwargs)
+                content = resp.message.content or ""
         except Exception as e:  # noqa: BLE001
             raise ProviderError(f"Ollama request failed for model {req.model!r}: {e}") from e
-        content = resp.message.content or ""
         if not content.strip():
             raise ProviderError(
                 f"Model {req.model!r} returned no content (output budget of {req.max_tokens} tokens exhausted, "
