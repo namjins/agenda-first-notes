@@ -98,6 +98,6 @@ test('AuthImage creates no blob URL when it unmounts before the fetch resolves',
   vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>((r) => { resolve = r })))
   const { unmount } = render(<AuthImage src="/api/w/ward_council/meetings/m1/agenda/images/i1" />)
   unmount()
-  await act(async () => { resolve(new Response(new Blob(['x']), { status: 200 })) })
+  await act(async () => { resolve(new Response('x', { status: 200 })) })
   expect(create).not.toHaveBeenCalled()
 })
