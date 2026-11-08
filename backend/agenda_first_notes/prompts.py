@@ -48,6 +48,7 @@ TRANSCRIPT>>>
 Return JSON with a "findings" list. Each finding: agenda_node_id (string id from the agenda or null), text (one concise outcome sentence), category (one of: decision, proposed_decision, assignment, calling_event, date, status_change, clarification, open_question, dependency, follow_up_candidate, completion, uncertainty, discussion), uncertainty (low|medium|high), follow_up (bool), owner (full name or null), calling_event (lifecycle event or null), evidence (list of exact verbatim quotes from the excerpt that support this exact claim at this exact certainty). Return an empty list if nothing substantive is in this excerpt."""
 
 REVIEW_INSTRUCTIONS = """You are an adversarial reviewer. Check each draft note against ONLY its cited evidence quotes and the agenda.
+The evidence quotes attached to each note are verbatim passages that have already been verified to exist in the transcript; do not dispute their existence. Judge whether they SUPPORT the note's claim at the stated certainty.
 Approved agenda:
 {outline}
 

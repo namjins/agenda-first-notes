@@ -7,6 +7,7 @@ passed in here, by construction.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -405,6 +406,13 @@ def review_round(
                 rec["action"] = "add_rejected_no_evidence"
             findings.append(rec)
             continue
+        if n is not None and _disputes_present_name(item, n):
+            # The evidence quotes were already verified verbatim in the transcript; a reviewer claiming a
+            # name in them is "not in the transcript" is itself hallucinating. Record, do not apply.
+            rec["action"] = "rejected_name_is_in_cited_evidence"
+            rec["severity"] = "info"
+            findings.append(rec)
+            continue
         if n is None or n["origin"] == "user" or item.action == "keep":
             rec["action"] = "none"
             findings.append(rec)
@@ -435,6 +443,23 @@ def review_round(
                 material += 1
         findings.append(rec)
     return notes, findings, material
+
+
+_NAME = re.compile(r"\b[A-Z][a-z]+(?: [A-Z][a-z]+)+\b")
+
+
+def _disputes_present_name(item: ReviewItem, note: dict[str, Any]) -> bool:
+    if item.category not in ("contamination", "name", "unsupported") or item.action not in (
+        "rewrite",
+        "remove",
+        "strip_owner",
+    ):
+        return False
+    names = set(_NAME.findall(item.message))
+    if not names:
+        return False
+    blob = " ".join(e["quote"] for e in note["evidence"])
+    return all(name in blob for name in names)
 
 
 def propose_agenda(provider: ModelProvider, settings: ModelSettings, workspace_id: str, text: str) -> list[AgendaNode]:

@@ -56,3 +56,36 @@ def test_owner_and_overconfidence_checks() -> None:
 def test_same_claim() -> None:
     assert same_claim("Draft the rotation list.", "draft the rotation list")
     assert not same_claim("Draft the rotation list.", "Book the bus for youth conference")
+
+
+def test_reviewer_cannot_dispute_a_name_present_in_verified_evidence() -> None:
+    from agenda_first_notes.pipeline import ReviewItem, _disputes_present_name
+
+    note = {"evidence": [{"quote": "Rowan Castellano, can you draft the rotation list?"}]}
+    bogus = ReviewItem(
+        note_id="x",
+        severity="high",
+        category="contamination",
+        message="The name 'Rowan Castellano' is not in the transcript excerpt.",
+        action="rewrite",
+        replacement_text="A participant will draft it.",
+    )
+    assert _disputes_present_name(bogus, note)
+    real = ReviewItem(
+        note_id="x",
+        severity="high",
+        category="contamination",
+        message="The name 'Avery Lindqvist' is not in the transcript excerpt.",
+        action="rewrite",
+        replacement_text="x",
+    )
+    assert not _disputes_present_name(real, note)
+    other = ReviewItem(
+        note_id="x",
+        severity="high",
+        category="overconfident",
+        message="Rowan Castellano did not clearly accept.",
+        action="rewrite",
+        replacement_text="x",
+    )
+    assert not _disputes_present_name(other, note)

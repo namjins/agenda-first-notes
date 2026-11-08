@@ -71,10 +71,8 @@ def extract_agenda_text(image: bytes) -> tuple[str, str]:
         except ProviderError as e:
             errors.append(str(e))
     if tesseract_available():
-        import pytesseract
-
         with Image.open(io.BytesIO(image)) as im:
-            text = pytesseract.image_to_string(im)
+            text = _tesseract_indented(im)
         return text.strip(), "tesseract"
     raise ValueError(
         "No local image-to-text backend is available (set a vision model in Settings or install Tesseract). Enter the agenda manually."
@@ -129,3 +127,41 @@ def test_inference(model: str) -> dict[str, Any]:
         "raw": raw[:500],
         "ok": '"ok"' in raw,
     }
+
+
+def _tesseract_indented(im: Image.Image) -> str:
+    """OCR that keeps nesting: indent level is inferred from each line's left x-offset.
+
+    shortcut: assumes a left-aligned list where deeper items are shifted right by a roughly constant step;
+    centered or multi-column layouts come out flat and the user fixes them in the tree editor.
+    """
+    import pytesseract
+
+    data = pytesseract.image_to_data(im, output_type=pytesseract.Output.DICT)
+    lines: dict[tuple[int, int, int], list[tuple[int, str]]] = {}
+    for i, word in enumerate(data["text"]):
+        if not word.strip():
+            continue
+        key = (data["block_num"][i], data["par_num"][i], data["line_num"][i])
+        lines.setdefault(key, []).append((data["left"][i], word))
+    rows = [(min(x for x, _ in ws), " ".join(w for _, w in sorted(ws))) for ws in lines.values()]
+    rows.sort(key=lambda r: _line_top(data, r[1]))
+    if not rows:
+        return ""
+    lefts = sorted({x for x, _ in rows})
+    base = lefts[0]
+    steps = [b - a for a, b in zip(lefts, lefts[1:], strict=False) if b - a >= 12]
+    unit = min(steps) if steps else 0
+    out = []
+    for x, text in rows:
+        level = round((x - base) / unit) if unit else 0
+        out.append("  " * level + text)
+    return "\n".join(out)
+
+
+def _line_top(data: dict[str, Any], text: str) -> int:
+    first = text.split(" ", 1)[0]
+    for i, w in enumerate(data["text"]):
+        if w == first:
+            return int(data["top"][i])
+    return 0
