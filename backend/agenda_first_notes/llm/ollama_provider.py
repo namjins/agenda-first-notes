@@ -57,18 +57,27 @@ class OllamaProvider:
         msg: dict[str, Any] = {"role": "user", "content": req.prompt}
         if req.images:
             msg["images"] = req.images
+        kwargs: dict[str, Any] = {
+            "model": req.model,
+            "messages": [{"role": "system", "content": req.system}, msg],
+            "format": req.json_schema,
+            "options": {"temperature": req.temperature, "num_ctx": req.num_ctx, "num_predict": req.max_tokens},
+            "stream": False,
+        }
         try:
-            resp = self._client.chat(
-                model=req.model,
-                messages=[{"role": "system", "content": req.system}, msg],
-                format=req.json_schema,
-                options={
-                    "temperature": req.temperature,
-                    "num_ctx": req.num_ctx,
-                    "num_predict": req.max_tokens,
-                },
-                stream=False,
-            )
+            try:
+                # Reasoning models otherwise spend the whole output budget on hidden thinking and return "".
+                resp = self._client.chat(**kwargs, think=False)
+            except ollama.ResponseError as e:
+                if "think" not in str(e).lower():
+                    raise
+                resp = self._client.chat(**kwargs)
         except Exception as e:  # noqa: BLE001
             raise ProviderError(f"Ollama request failed for model {req.model!r}: {e}") from e
-        return resp.message.content or ""
+        content = resp.message.content or ""
+        if not content.strip():
+            raise ProviderError(
+                f"Model {req.model!r} returned no content (output budget of {req.max_tokens} tokens exhausted, "
+                "or the model emitted only reasoning). Increase max output tokens or choose another model."
+            )
+        return content

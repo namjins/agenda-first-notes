@@ -59,7 +59,7 @@ Transcript excerpt available for omission checks:
 {excerpt}
 TRANSCRIPT>>>
 
-For each problem return a finding: note_id (or null for an omission), severity (low|high), category (unsupported|overconfident|wrong_placement|inferred_owner|name|calling_state|follow_up|contamination|formatting|omission), message (plain English), action (remove|rewrite|move|strip_owner|clear_follow_up|add|keep), replacement_text (for rewrite/add), new_agenda_node_id (for move/add), new_uncertainty (low|medium|high or null), evidence (exact quotes, required for add).
+For each problem return a finding: note_id (or null for an omission), severity (low|high), category (unsupported|overconfident|wrong_placement|inferred_owner|name|calling_state|follow_up|contamination|formatting|omission), message (plain English), action (remove|rewrite|move|strip_owner|clear_follow_up|add|keep), replacement_text (for rewrite/add), new_agenda_node_id (for move/add), new_uncertainty (low|medium|high or null), follow_up (bool, for add), evidence (exact quotes, required for add).
 Checks: factual support, degree of certainty, missing meaningful outcomes, agenda placement, speaker attribution, name accuracy, owner accuracy, calling-state accuracy, follow-up validity, contamination by facts not in the excerpt, formatting (short outcome sentence, no narration, no timestamps).
 Do not invent certainty to make the draft pass. Return an empty findings list only if everything is supported at the stated certainty."""
 

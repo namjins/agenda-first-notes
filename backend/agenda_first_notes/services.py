@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from . import config, evidence, pipeline, render
 from .agenda import AgendaNode, from_dicts, node_ids, parse_text, to_dicts, validate_tree, walk
 from .llm import get_provider
-from .llm.base import ModelProvider
+from .llm.base import ModelProvider, ProviderError
 from .models import (
     TRANSITIONS,
     AgendaRevision,
@@ -357,9 +357,19 @@ def process_meeting(
                 seg.status = "done"
                 all_notes.extend(notes)
                 all_findings.extend(findings)
-            except pipeline.PipelineError as e:
+            except (pipeline.PipelineError, ProviderError) as e:
                 seg.status = "failed"
-                seg.error = str(e)
+                seg.error = str(e)[:1000]
+                all_findings.append(
+                    {
+                        "note_id": None,
+                        "severity": "high",
+                        "category": "segment_failed",
+                        "message": f"Segment {seg.index + 1} of {len(segs)} (characters {seg.start}-{seg.end}) was not processed: {seg.error}",
+                        "action": None,
+                        "source": "deterministic",
+                    }
+                )
             _save_coverage(ws, meeting_id, segs)
         notes = pipeline.dedupe(all_notes)
         for i, nd in enumerate(notes):

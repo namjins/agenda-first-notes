@@ -1,0 +1,106 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    name: Backend (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        working-directory: backend
+        run: uv sync --all-extras
+      - name: Lint and type-check
+        working-directory: backend
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+          uv run mypy
+      - name: Tests (synthetic data, mocked model)
+        working-directory: backend
+        run: uv run pytest -q
+      - name: Migrations + storage path resolution
+        working-directory: backend
+        run: |
+          uv run agenda-first-notes migrate
+          uv run agenda-first-notes paths
+      - name: Repository audit
+        working-directory: backend
+        run: uv run agenda-first-notes audit
+
+  frontend:
+    name: Frontend + E2E (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install backend (for e2e server)
+        working-directory: backend
+        run: uv sync --all-extras
+      - name: Install frontend
+        working-directory: frontend
+        run: npm ci
+      - name: Typecheck, unit tests, build
+        working-directory: frontend
+        run: |
+          npm run typecheck
+          npm test
+          npm run build
+      - name: Playwright browsers
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+      - name: End-to-end (fake local model, synthetic data)
+        working-directory: frontend
+        run: npm run e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-${{ matrix.os }}
+          path: frontend/test-results
+
+  security:
+    name: Secret scan + dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: pip-audit (backend)
+        working-directory: backend
+        run: |
+          uv sync --all-extras
+          uv export --no-hashes --all-extras > requirements.txt
+          uvx pip-audit -r requirements.txt --strict || echo "::warning::pip-audit found issues"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: npm audit (frontend)
+        working-directory: frontend
+        run: npm audit --audit-level=high || echo "::warning::npm audit found issues"

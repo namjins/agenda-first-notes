@@ -1,0 +1,32 @@
+# Install once:  uvx pre-commit install   (or: pip install pre-commit && pre-commit install)
+repos:
+  - repo: local
+    hooks:
+      - id: repo-audit
+        name: Agenda First Notes repository audit (no real data, no secrets)
+        entry: uv run --directory backend agenda-first-notes audit --staged
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: ruff
+        name: ruff
+        entry: uv run --directory backend ruff check --fix
+        language: system
+        types: [python]
+      - id: ruff-format
+        name: ruff format
+        entry: uv run --directory backend ruff format
+        language: system
+        types: [python]
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.2
+    hooks:
+      - id: gitleaks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-added-large-files
+        args: ["--maxkb=1024"]
+      - id: detect-private-key
+      - id: end-of-file-fixer
+      - id: trailing-whitespace

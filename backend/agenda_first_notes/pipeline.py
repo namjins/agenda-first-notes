@@ -44,6 +44,7 @@ class ReviewItem(BaseModel):
     replacement_text: str | None = None
     new_agenda_node_id: str | None = None
     new_uncertainty: str | None = None
+    follow_up: bool = False  # for action=add
     evidence: list[str] = Field(default_factory=list)
 
 
@@ -62,6 +63,25 @@ class AgendaProposal(BaseModel):
 
 class PipelineError(RuntimeError):
     pass
+
+
+def strict_schema(model: type[BaseModel]) -> dict[str, Any]:
+    """JSON schema with every property required, so constrained decoding makes the model emit all fields
+    (Pydantic marks fields with defaults as optional, and models then silently omit agenda_node_id etc.)."""
+    schema = model.model_json_schema()
+
+    def harden(node: Any) -> None:
+        if isinstance(node, dict):
+            if node.get("type") == "object" and "properties" in node:
+                node["required"] = list(node["properties"])
+            for v in node.values():
+                harden(v)
+        elif isinstance(node, list):
+            for v in node:
+                harden(v)
+
+    harden(schema)
+    return schema
 
 
 def _parse(model: type[BaseModel], raw: str) -> Any:
@@ -119,7 +139,7 @@ def extract_segment(
             end=seg.end,
             excerpt=excerpt,
         ),
-        json_schema=ExtractionOutput.model_json_schema(),
+        json_schema=strict_schema(ExtractionOutput),
         temperature=settings.temperature,
         num_ctx=settings.context_length,
         max_tokens=settings.max_output_tokens,
@@ -340,7 +360,7 @@ def review_round(
         prompt=prompts.REVIEW_INSTRUCTIONS.format(
             outline=outline(tree), notes=json.dumps(payload, ensure_ascii=False), excerpt=excerpt
         ),
-        json_schema=ReviewOutput.model_json_schema(),
+        json_schema=strict_schema(ReviewOutput),
         temperature=settings.temperature,
         num_ctx=settings.context_length,
         max_tokens=settings.max_output_tokens,
@@ -371,6 +391,7 @@ def review_round(
                         text=item.replacement_text,
                         category="discussion",
                         uncertainty=item.new_uncertainty or "medium",
+                        follow_up=item.follow_up,
                         evidence=[],
                     ),
                     ev,
@@ -421,7 +442,7 @@ def propose_agenda(provider: ModelProvider, settings: ModelSettings, workspace_i
         model=settings.primary_model or "",
         system=prompts.system_prompt(workspace_id),
         prompt=prompts.AGENDA_PROPOSAL_INSTRUCTIONS.format(excerpt=text[: settings.segment_chars]),
-        json_schema=AgendaProposal.model_json_schema(),
+        json_schema=strict_schema(AgendaProposal),
         temperature=settings.temperature,
         num_ctx=settings.context_length,
         max_tokens=settings.max_output_tokens,
