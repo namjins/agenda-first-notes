@@ -42,6 +42,18 @@ Next Meeting – Follow-Up Items
 
 (All names and content in this repository are fictional.)
 
+## Screenshots (synthetic data, rule-based stand-in model)
+
+| Agenda tree editor | Evidence-linked review |
+|---|---|
+| ![Agenda editor](docs/screenshots/01-agenda-editor.png) | ![Review](docs/screenshots/02-review-evidence.png) |
+
+| Approved Markdown | Follow-Up Inbox |
+|---|---|
+| ![Approved notes](docs/screenshots/03-approved-markdown.png) | ![Inbox](docs/screenshots/04-follow-up-inbox.png) |
+
+![Dashboard, dark mode](docs/screenshots/05-dashboard-dark.png)
+
 ## System requirements
 
 - macOS, Windows or Linux. 64-bit.
