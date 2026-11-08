@@ -96,6 +96,7 @@ def engine_for(ws: Workspace) -> Engine:
             cur = dbapi_conn.cursor()
             cur.execute("PRAGMA foreign_keys=ON")
             cur.execute("PRAGMA journal_mode=WAL")
+            cur.execute("PRAGMA secure_delete=ON")  # deleted meeting content is overwritten, not left in free pages
             cur.close()
 
         _engines[key] = eng

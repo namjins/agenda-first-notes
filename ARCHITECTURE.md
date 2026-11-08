@@ -60,7 +60,7 @@ Statuses: `verified`, `uncertain` (model said high uncertainty), `needs_review`,
 
 ## Processing pipeline (`services.process_meeting`)
 
-1. Validate: transcript exists, latest agenda revision is approved, model selected. State → `processing`. Previous model-origin notes and findings are deleted (user notes kept) — re-running is idempotent.
+1. Validate: transcript exists, latest agenda revision is approved, model selected. State → `processing`. Previous model-origin notes and findings are deleted (user notes kept) — re-running is idempotent. While processing, transcript, agenda, note edits and delete are refused; a restart moves interrupted meetings to `failed`. Notes on agenda nodes removed by a newly approved agenda revision are detached at approval, and coverage is reset.
 2. `segmentation.segment()` splits at paragraph/line/sentence boundaries with overlap; each `Segment` tracks `status`. Coverage is persisted after every segment.
 3. Per segment: `pipeline.extract_segment` → model JSON (schema-constrained) → evidence validation → deterministic findings. A failed segment is recorded, not hidden.
 4. `pipeline.dedupe` merges equivalent claims from overlapping segments.
@@ -70,7 +70,7 @@ Statuses: `verified`, `uncertain` (model said high uncertainty), `needs_review`,
 
 ## Historical reconciliation (`services._propose_history`)
 
-On approval, an immutable `NotesRevision` snapshot is written, then for each live note: `follow_up` → `FollowUp(status=proposed)` + `FollowUpEvent`; `decision`/`proposed_decision` → `Decision(confirmed|proposed|unverified)`; `calling_event` → `CallingEvent`; `date` → `ScheduledEvent(event_date=None)`. Each carries `origin` (transcript|user) and the evidence, and writes an `AuditEvent`. Nothing existing is modified. Users then confirm/edit in the inbox (`history.py`), each change appending `FollowUpEvent`/`AuditEvent` rows; date changes create a superseding `ScheduledEvent` instead of overwriting.
+On approval, an immutable `NotesRevision` snapshot is written, then for each live note: `follow_up` → `FollowUp(status=proposed)` + `FollowUpEvent`; `decision`/`proposed_decision` → `Decision(confirmed|proposed|unverified)`; `calling_event` → `CallingEvent`; `date` → `ScheduledEvent(event_date=None)`. Each carries `origin` (transcript|user: user only when the user changed text, owner or evidence) and the evidence, and writes an `AuditEvent`. Only notes on nodes of the approved tree are proposed. On re-approval, rows are matched by note id or by claim against earlier approved revisions, so regeneration does not duplicate them; a still-`proposed` follow-up whose note is gone becomes `unverified` with an event. Nothing else existing is modified. Users then confirm/edit in the inbox (`history.py`), each change appending `FollowUpEvent`/`AuditEvent` rows; date changes create a superseding `ScheduledEvent` instead of overwriting.
 
 Undiscussed agenda follow-ups (Case B) are detected lexically by `services.undiscussed_agenda_follow_ups`, shown in the review panel, and only enter the final follow-up list when the user ticks them (`Meeting.carry_forward`). Historical items absent from the agenda (Case C) never touch the notes.
 
@@ -84,7 +84,7 @@ Undiscussed agenda follow-ups (Case B) are detected lexically by `services.undis
 
 ## Database schema (per workspace)
 
-`meetings`, `agenda_revisions`, `agenda_images`, `transcript_versions`, `notes`, `notes_revisions`, `review_findings`, `jobs`, `follow_ups`, `follow_up_events`, `decisions`, `calling_events`, `scheduled_events`, `audit_events` (append-only), `reference_documents`, and the FTS5 virtual table `search_index(entity_type, entity_id, meeting_id, meeting_date, status, title, body)`. Column details: `backend/agenda_first_notes/models.py`. Migrations: `backend/alembic/versions/`.
+`meetings`, `agenda_revisions`, `agenda_images`, `transcript_versions`, `notes`, `notes_revisions`, `review_findings`, `jobs`, `follow_ups`, `follow_up_events`, `decisions`, `calling_events`, `scheduled_events`, `audit_events` (append-only, except that deleting a meeting redacts that meeting's payloads; `secure_delete` on, WAL truncated), `reference_documents`, and the FTS5 virtual table `search_index(entity_type, entity_id, meeting_id, meeting_date, status, title, body)`. Column details: `backend/agenda_first_notes/models.py`. Migrations: `backend/alembic/versions/`.
 
 ## Jobs
 

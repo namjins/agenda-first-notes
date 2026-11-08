@@ -13,7 +13,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError
 
-from . import evidence, prompts
+from . import evidence, prompts, render
 from .agenda import AgendaNode, node_ids, outline
 from .config import ModelSettings
 from .llm.base import GenerateRequest, ModelProvider
@@ -102,11 +102,11 @@ def _parse(model: type[BaseModel], raw: str) -> Any:
 def note_dict(f: Finding, ev: list[dict[str, Any]], status: str) -> dict[str, Any]:
     return {
         "agenda_node_id": f.agenda_node_id,
-        "text": f.text.strip(),
+        "text": render.clean_text(f.text),
         "category": f.category if f.category in NOTE_CATEGORIES else "discussion",
         "uncertainty": f.uncertainty if f.uncertainty in ("low", "medium", "high") else "medium",
         "follow_up": bool(f.follow_up),
-        "owner": f.owner.strip() if f.owner else None,
+        "owner": " ".join(f.owner.split()) or None if f.owner else None,
         "calling_event": f.calling_event if f.calling_event in CALLING_EVENTS else None,
         "evidence": ev,
         "status": status,
@@ -133,12 +133,12 @@ def extract_segment(
         model=settings.primary_model or "",
         system=prompts.system_prompt(workspace_id),
         prompt=prompts.EXTRACT_INSTRUCTIONS.format(
-            outline=outline(tree) or "(no agenda supplied; use null agenda_node_id)",
+            outline=prompts.fence(outline(tree)) or "(no agenda supplied; use null agenda_node_id)",
             seg_no=seg.index + 1,
             seg_total=seg_total,
             start=seg.start,
             end=seg.end,
-            excerpt=excerpt,
+            excerpt=prompts.fence(excerpt),
         ),
         json_schema=strict_schema(ExtractionOutput),
         temperature=settings.temperature,
@@ -151,15 +151,13 @@ def extract_segment(
     notes: list[dict[str, Any]] = []
     findings: list[dict[str, Any]] = []
     for f in out.findings:
-        if not f.text.strip():
+        if not render.clean_text(f.text):
             continue
         if f.agenda_node_id is not None and f.agenda_node_id not in valid_ids:
             f.agenda_node_id = None
         ev, bad = evidence.validate_quotes(f.evidence, excerpt, seg.start, transcript_version_id)
-        status = "verified" if ev else "unsupported"
-        if f.uncertainty == "high" and ev:
-            status = "uncertain"
-        n = note_dict(f, ev, status)
+        n = note_dict(f, ev, "unsupported")
+        n["status"] = derive_status(n)
         own: list[dict[str, Any]] = []  # findings about this note; service attaches note ids after insert
         if bad:
             own.append(
@@ -193,8 +191,6 @@ def extract_segment(
             )
             n["owner"] = None
         if evidence.looks_overconfident(n["text"], n["category"], n["uncertainty"], ev):
-            if ev:
-                n["status"] = "needs_review"
             own.append(
                 _finding(
                     None,
@@ -231,28 +227,90 @@ def _finding(note_id: str | None, severity: str, category: str, message: str, ac
     }
 
 
+def derive_status(n: dict[str, Any]) -> str:
+    """Model-note status from its evidence alone; 'verified' only when every deterministic check passes."""
+    if not n["evidence"]:
+        return "unsupported"
+    if evidence.looks_overconfident(n["text"], n["category"], n["uncertainty"], n["evidence"]):
+        return "needs_review"
+    if unsupported_names(n["text"], n["evidence"]):
+        return "needs_review"
+    return "uncertain" if n["uncertainty"] == "high" else "verified"
+
+
+# Most cautious first: when duplicates disagree, the merged note keeps the weaker claim (rule 6).
+CAUTION = [
+    "uncertainty",
+    "open_question",
+    "discussion",
+    "proposed_decision",
+    "follow_up_candidate",
+    "clarification",
+    "dependency",
+    "date",
+    "status_change",
+    "calling_event",
+    "assignment",
+    "decision",
+    "completion",
+]
+_LEVELS = ("low", "medium", "high")
+
+
+def _merge(k: dict[str, Any], n: dict[str, Any]) -> None:
+    """Fold duplicate n into k: weaker category/wording, higher uncertainty, union of evidence, re-derived status."""
+    if CAUTION.index(n["category"]) < CAUTION.index(k["category"]):
+        k["text"], k["category"] = n["text"], n["category"]
+    k["uncertainty"] = max(k["uncertainty"], n["uncertainty"], key=_LEVELS.index)
+    k["calling_event"] = k["calling_event"] or n["calling_event"]
+    k["follow_up"] = k["follow_up"] or n["follow_up"]
+    owners = {o for o in (k["owner"], n["owner"]) if o}
+    k["owner"] = owners.pop() if len(owners) == 1 and k["category"] == "assignment" else None
+    for ev in n["evidence"]:
+        if ev not in k["evidence"]:
+            k["evidence"].append(ev)
+    if k["owner"] and not evidence.owner_supported(k["owner"], k["evidence"]):
+        k["owner"] = None
+    k["status"] = derive_status(k)
+    k.setdefault("_findings", []).extend(n.get("_findings", []))  # so the duplicate's findings get a note id
+    if k["evidence"]:
+        for fd in k["_findings"]:
+            if fd.get("action") in ("excluded", "evidence_rejected"):
+                fd["severity"] = "info"  # superseded: the merged claim has located evidence
+
+
 def dedupe(notes: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Overlapping segments produce duplicates; keep the first occurrence of an equivalent claim."""
+    """Overlapping segments produce duplicates; merge equivalent claims on the same agenda item.
+
+    Distinct calling events are never merged (rule 8)."""
     kept: list[dict[str, Any]] = []
     for n in notes:
-        dup = False
         for k in kept:
+            ce = {k["calling_event"], n["calling_event"]} - {None}
             if (
                 k["agenda_node_id"] == n["agenda_node_id"]
-                and k["category"] == n["category"]
-                and k["calling_event"] == n["calling_event"]
+                and len(ce) <= 1
                 and evidence.same_claim(k["text"], n["text"])
             ):
-                dup = True
-                if n["follow_up"]:
-                    k["follow_up"] = True
-                for ev in n["evidence"]:
-                    if ev not in k["evidence"]:
-                        k["evidence"].append(ev)
+                _merge(k, n)
                 break
-        if not dup:
+        else:
             kept.append(n)
     return kept
+
+
+def claim_exists(agenda_node_id: str | None, text: str, notes: list[dict[str, Any]]) -> bool:
+    """True when any note (deleted and user-touched included) already makes this claim on this agenda item."""
+    return any(n["agenda_node_id"] == agenda_node_id and evidence.same_claim(n["text"], text) for n in notes)
+
+
+_NAME = re.compile(r"\b[A-Z][a-z]+(?: [A-Z][a-z]+)+\b")
+
+
+def unsupported_names(text: str, ev: list[dict[str, Any]]) -> list[str]:
+    """Capitalised multi-word names in text that do not occur in the cited evidence (rule 7)."""
+    blob = evidence.fold(" ".join(e["quote"] for e in ev)).lower()
+    return [m for m in _NAME.findall(evidence.fold(text)) if " ".join(m.split()).lower() not in " ".join(blob.split())]
 
 
 def deterministic_checks(notes: list[dict[str, Any]], tree: list[AgendaNode]) -> list[dict[str, Any]]:
@@ -297,6 +355,9 @@ def deterministic_checks(notes: list[dict[str, Any]], tree: list[AgendaNode]) ->
             out.append(
                 _finding(nid, "high", "overconfident", "Wording is more certain than the evidence supports.", None)
             )
+        names = unsupported_names(n["text"], n["evidence"])
+        if names:
+            out.append(_finding(nid, "low", "name", f"Not in the cited evidence: {', '.join(names)[:200]}.", None))
     return out
 
 
@@ -342,7 +403,9 @@ def review_round(
         model=settings.reviewer_model or settings.primary_model or "",
         system=prompts.system_prompt(workspace_id),
         prompt=prompts.REVIEW_INSTRUCTIONS.format(
-            outline=outline(tree), notes=json.dumps(payload, ensure_ascii=False), excerpt=excerpt
+            outline=prompts.fence(outline(tree)),
+            notes=prompts.fence(json.dumps(payload, ensure_ascii=False)),
+            excerpt=prompts.fence(excerpt),
         ),
         json_schema=strict_schema(ReviewOutput),
         temperature=settings.temperature,
@@ -368,25 +431,33 @@ def review_round(
         n = by_id.get(item.note_id or "")
         if item.action == "add":
             ev, _bad = evidence.validate_quotes(item.evidence, full_text, 0, transcript_version_id)
-            if ev and item.replacement_text and (item.new_agenda_node_id in valid_ids or not tree):
+            node = item.new_agenda_node_id if item.new_agenda_node_id in valid_ids else None
+            text = render.clean_text(item.replacement_text or "")
+            if not (ev and text and (node or not tree)):
+                rec["action"] = "add_rejected_no_evidence"
+            elif claim_exists(node, text, notes):
+                # Already present, or deleted/edited by the user (or removed earlier): never resurrect it.
+                rec["action"] = "add_rejected_duplicate"
+            elif unsupported_names(text, ev):
+                rec["action"] = "add_rejected_unsupported_name"
+            else:
                 new = note_dict(
                     Finding(
-                        agenda_node_id=item.new_agenda_node_id if item.new_agenda_node_id in valid_ids else None,
-                        text=item.replacement_text,
+                        agenda_node_id=node,
+                        text=text,
                         category="discussion",
                         uncertainty=item.new_uncertainty or "medium",
                         follow_up=item.follow_up,
                         evidence=[],
                     ),
                     ev,
-                    "uncertain" if item.new_uncertainty == "high" else "verified",
+                    "unsupported",
                 )
+                new["status"] = derive_status(new)
                 new["position"] = len(notes)
                 notes.append(new)
                 rec["action"] = "added"
                 material += 1  # a newly discovered omission means another round is needed
-            else:
-                rec["action"] = "add_rejected_no_evidence"
             findings.append(rec)
             continue
         if n is not None and _disputes_present_name(item, n):
@@ -405,12 +476,21 @@ def review_round(
         if item.action == "remove":
             n["deleted"] = True
             rec["action"] = "removed"
-        elif item.action == "rewrite" and item.replacement_text:
-            n["text"] = item.replacement_text.strip()
-            if item.new_uncertainty in ("low", "medium", "high"):
-                n["uncertainty"] = item.new_uncertainty
-            n["status"] = "uncertain" if n["uncertainty"] == "high" else "verified"
-            rec["action"] = "rewritten"
+        elif item.action == "rewrite" and render.clean_text(item.replacement_text or ""):
+            text = render.clean_text(item.replacement_text or "")
+            if unsupported_names(text, n["evidence"]):
+                rec["action"] = "rewrite_rejected_unsupported_name"
+                if rec["severity"] == "high":
+                    material += 1
+            else:
+                n["text"] = text
+                # A rewrite may hedge, never firm up: uncertainty only moves towards "high" (rule 6).
+                if item.new_uncertainty in _LEVELS and _LEVELS.index(item.new_uncertainty) > _LEVELS.index(
+                    n["uncertainty"]
+                ):
+                    n["uncertainty"] = item.new_uncertainty
+                n["status"] = derive_status(n)
+                rec["action"] = "rewritten"
         elif item.action == "move" and item.new_agenda_node_id in valid_ids:
             n["agenda_node_id"] = item.new_agenda_node_id
             rec["action"] = "moved"
@@ -428,10 +508,18 @@ def review_round(
     return notes, findings, material
 
 
-_NAME = re.compile(r"\b[A-Z][a-z]+(?: [A-Z][a-z]+)+\b")
+_ABSENCE = re.compile(
+    r"\b(?:not (?:in|present|found|mentioned|stated|named|appear)|(?:does|do)(?:n't| not) appear|no mention|"
+    r"absent|missing from|nowhere)\b",
+    re.I,
+)
 
 
 def _disputes_present_name(item: ReviewItem, note: dict[str, Any]) -> bool:
+    """Only a claim that a name is ABSENT from the transcript is overridden by verified evidence containing it;
+    any other objection (e.g. "X only asked; nothing was decided") stands."""
+    if not _ABSENCE.search(item.message):
+        return False
     if item.category not in ("contamination", "name", "unsupported") or item.action not in (
         "rewrite",
         "remove",
@@ -449,7 +537,7 @@ def propose_agenda(provider: ModelProvider, settings: ModelSettings, workspace_i
     req = GenerateRequest(
         model=settings.primary_model or "",
         system=prompts.system_prompt(workspace_id),
-        prompt=prompts.AGENDA_PROPOSAL_INSTRUCTIONS.format(excerpt=text[: settings.segment_chars]),
+        prompt=prompts.AGENDA_PROPOSAL_INSTRUCTIONS.format(excerpt=prompts.fence(text[: settings.segment_chars])),
         json_schema=strict_schema(AgendaProposal),
         temperature=settings.temperature,
         num_ctx=settings.context_length,

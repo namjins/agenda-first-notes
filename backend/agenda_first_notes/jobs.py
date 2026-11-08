@@ -13,7 +13,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 from sqlalchemy import select
 
-from .models import Job
+from .models import Job, Meeting
+from .services import transition
 from .workspaces import Workspace, get_workspace, session_for
 
 _executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="afn-job")
@@ -120,6 +121,10 @@ def recover_interrupted(ws: Workspace) -> int:
         for j in s.scalars(select(Job).where(Job.status.in_(["queued", "running"]))):
             j.status = "failed"
             j.message = "Interrupted by application restart; retry to continue."
+            m = s.get(Meeting, j.meeting_id) if j.meeting_id else None
+            if m is not None and m.state == "processing":  # else edits and delete stay refused until a re-run
+                transition(m, "failed")
+                m.last_error = j.message
             n += 1
         s.commit()
         return n

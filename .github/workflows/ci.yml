@@ -96,11 +96,11 @@ jobs:
         working-directory: backend
         run: |
           uv sync --all-extras
-          uv export --no-hashes --all-extras > requirements.txt
-          uvx pip-audit -r requirements.txt --strict || echo "::warning::pip-audit found issues"
+          uv export --no-hashes --all-extras --no-emit-project > requirements.txt
+          uvx pip-audit -r requirements.txt --strict
       - uses: actions/setup-node@v4
         with:
           node-version: 22
       - name: npm audit (frontend)
         working-directory: frontend
-        run: npm audit --audit-level=high || echo "::warning::npm audit found issues"
+        run: npm audit --audit-level=high

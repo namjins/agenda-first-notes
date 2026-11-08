@@ -2,7 +2,17 @@
 
 from __future__ import annotations
 
-PROMPT_VERSION = "1.0"
+import re
+
+PROMPT_VERSION = "1.1"  # 1.1: inserted text is fenced so transcript/agenda/notes cannot close the prompt delimiters
+
+_DELIM_RUN = re.compile(r"<{3,}|>{3,}")
+
+
+def fence(text: str) -> str:
+    """Neutralise <<< / >>> runs in inserted text so it cannot close or open a TRANSCRIPT block."""
+    return _DELIM_RUN.sub(lambda m: " ".join(m.group()), text)
+
 
 CORE_POLICY = """You are a careful meeting secretary producing evidence-grounded notes.
 Rules (absolute):

@@ -14,9 +14,11 @@ import os
 import re
 from urllib.parse import urlparse
 
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.datastructures import MutableHeaders
+from starlette.exceptions import HTTPException
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 LOOPBACK = {"127.0.0.1", "localhost", "::1", "[::1]"}
 
@@ -43,13 +45,16 @@ def origin_allowed(origin: str | None, extra: set[str]) -> bool:
     return (u.hostname or "") in {"127.0.0.1", "localhost", "::1"} or origin in extra
 
 
-class LocalOnlyMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app, token: str) -> None:  # type: ignore[no-untyped-def]
-        super().__init__(app)
+class LocalOnlyMiddleware:
+    """Pure ASGI (not BaseHTTPMiddleware): the size-limited receive must reach the route directly, so an
+    oversized chunked body surfaces as a 413 HTTPException rather than being wrapped in a task-group error."""
+
+    def __init__(self, app: ASGIApp, token: str) -> None:
+        self.app = app
         self.token = token
         self.extra_origins = {o for o in os.environ.get("AFN_DEV_ORIGINS", "").split(",") if o}
 
-    async def dispatch(self, request: Request, call_next) -> Response:  # type: ignore[no-untyped-def,override]
+    def refuse(self, request: Request) -> Response | None:
         if not host_allowed(request.headers.get("host")):
             return JSONResponse({"detail": "Host not allowed"}, status_code=400)
         if not origin_allowed(request.headers.get("origin"), self.extra_origins):
@@ -65,8 +70,30 @@ class LocalOnlyMiddleware(BaseHTTPMiddleware):
                     {"detail": "Missing or invalid API token. Open the app via the URL printed at launch."},
                     status_code=401,
                 )
-        resp = await call_next(request)
-        resp.headers.setdefault("X-Content-Type-Options", "nosniff")
-        resp.headers.setdefault("Referrer-Policy", "no-referrer")
-        resp.headers.setdefault("Cache-Control", "no-store")
-        return resp
+        return None
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        seen = 0
+
+        async def limited() -> Message:
+            # Content-Length can be absent (chunked); count the bytes that actually arrive.
+            nonlocal seen
+            message = await receive()
+            seen += len(message.get("body", b""))
+            if seen > MAX_BODY_BYTES:
+                raise HTTPException(413, "Request body too large")
+            return message
+
+        async def send_hardened(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                headers = MutableHeaders(scope=message)
+                headers.setdefault("X-Content-Type-Options", "nosniff")
+                headers.setdefault("Referrer-Policy", "no-referrer")
+                headers.setdefault("Cache-Control", "no-store")
+            await send(message)
+
+        refusal = self.refuse(Request(scope))
+        await (refusal or self.app)(scope, limited, send_hardened)

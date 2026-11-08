@@ -42,10 +42,11 @@ def update_follow_up(ws: Workspace, follow_up_id: str, data: dict[str, Any]) -> 
             "owner": fu.owner,
             "due_date": fu.due_date,
         }
+        status_changed = "status" in data and data["status"] != fu.status
         if "status" in data:
             if data["status"] not in FOLLOW_UP_STATUSES:
                 raise ServiceError("invalid status")
-            if data["status"] != fu.status:
+            if status_changed:
                 s.add(
                     FollowUpEvent(
                         follow_up_id=fu.id,
@@ -56,13 +57,15 @@ def update_follow_up(ws: Workspace, follow_up_id: str, data: dict[str, Any]) -> 
                     )
                 )
                 fu.status = data["status"]
-        if "description" in data and data["description"].strip():
+        if "description" in data and (data["description"] or "").strip():
             fu.description = data["description"].strip()[:2000]
         if "owner" in data:
             fu.owner = (data["owner"] or "").strip()[:120] or None
         if "due_date" in data:
             fu.due_date = data["due_date"] or None
-        if data.get("note") and "status" not in data:
+        if (fu.description, fu.owner) != (prev["description"], prev["owner"]):
+            fu.origin = "user"  # the item now states the user's wording/owner, not the transcript's
+        if data.get("note") and not status_changed:
             s.add(
                 FollowUpEvent(
                     follow_up_id=fu.id,
@@ -83,6 +86,7 @@ def update_follow_up(ws: Workspace, follow_up_id: str, data: dict[str, Any]) -> 
                 "description": fu.description,
                 "owner": fu.owner,
                 "due_date": fu.due_date,
+                "note": data.get("note"),
             },
             source="user",
             meeting_id=fu.meeting_id,
@@ -202,15 +206,20 @@ def update_calling_event(ws: Workspace, event_id: str, data: dict[str, Any]) -> 
         if ce is None:
             raise NotFound("calling event not found")
         prev = {"person": ce.person, "calling": ce.calling, "event_type": ce.event_type}
-        for k in ("person", "calling", "note"):
-            if k in data:
-                setattr(ce, k, (data[k] or "").strip() or None)
-        if "event_type" in data:
+        if "event_type" in data and data["event_type"] != ce.event_type:
             from .models import CALLING_EVENTS
 
             if data["event_type"] not in CALLING_EVENTS:
                 raise ServiceError("invalid calling event type")
+            if ce.origin != "user":
+                # Calling events are independent; a different stage is a new event, never an edit of this one.
+                raise ServiceError("Record a new calling event instead of changing a transcript-backed one.")
             ce.event_type = data["event_type"]
+        for k in ("person", "calling", "note"):
+            if k in data:
+                setattr(ce, k, (data[k] or "").strip() or None)
+        if (ce.person, ce.calling) != (prev["person"], prev["calling"]):
+            ce.origin = "user"  # the row now states the user's person/calling, not the transcript's
         audit(
             s,
             "calling_event",
@@ -231,11 +240,18 @@ def list_scheduled_events(ws: Workspace) -> list[ScheduledEvent]:
 
 
 def set_event_date(ws: Workspace, event_id: str, event_date: str, note: str | None = None) -> ScheduledEvent:
-    """A changed date never overwrites: a new record supersedes the old one."""
+    """A changed date never overwrites: a new record supersedes the latest one in the chain."""
+    if not (event_date or "").strip():
+        raise ServiceError("event_date is required")
     with session_for(ws) as s:
         old = s.get(ScheduledEvent, event_id)
         if old is None:
             raise NotFound("event not found")
+        # Changing an already-superseded record changes the current one; never fork the chain.
+        while (
+            nxt := s.scalars(select(ScheduledEvent).where(ScheduledEvent.supersedes_id == old.id)).first()
+        ) is not None:
+            old = nxt
         if old.event_date is None:
             old.event_date = event_date.strip()[:40]
             audit(
@@ -243,7 +259,7 @@ def set_event_date(ws: Workspace, event_id: str, event_date: str, note: str | No
                 "scheduled_event",
                 old.id,
                 "date_set",
-                new={"event_date": old.event_date},
+                new={"event_date": old.event_date, "note": note},
                 source="user",
                 meeting_id=old.meeting_id,
             )

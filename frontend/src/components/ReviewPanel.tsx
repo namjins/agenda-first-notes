@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { api } from '../api'
 import { flatten } from '../agendaTree'
-import type { Finding, Note, ReviewView, WorkspaceId } from '../types'
+import type { AgendaNode, Finding, Note, ReviewView, WorkspaceId } from '../types'
 import { ErrorBox } from './ui'
 
 const STATUS_LABEL: Record<Note['status'], [string, string]> = {
@@ -47,37 +47,6 @@ export default function ReviewPanel({ ws, view, transcript, onChange, readOnly }
     return parts
   }, [selected, transcript])
 
-  const NoteRow = ({ n }: { n: Note }) => {
-    const [label, cls] = STATUS_LABEL[n.status]
-    const fs = (findingsByNote.get(n.id) ?? []).filter((f) => !f.resolved)
-    const isSel = selected?.id === n.id
-    return (
-      <li className={`rounded-md border p-2 text-sm ${isSel ? 'ring-2' : ''}`} style={{ borderColor: 'var(--line)', ['--tw-ring-color' as string]: 'var(--accent)' }} data-testid="note">
-        <div className="flex flex-wrap items-center gap-1.5">
-          <button className={`tag ${cls}`} onClick={() => setSelected(isSel ? null : n)} title="Show evidence">{label}</button>
-          {n.stale && <span className="tag tag-bad">Source changed — revalidate</span>}
-          <span className="tag tag-muted">{n.category.replaceAll('_', ' ')}</span>
-          {n.calling_event && <span className="tag tag-muted">calling: {n.calling_event.replaceAll('_', ' ')}</span>}
-          <span className="muted ml-auto text-xs">{n.evidence.length} quote(s)</span>
-        </div>
-        {readOnly ? <p className="mt-1">{n.text}{n.follow_up && ' [Follow-up]'}{n.owner && ` [Owner: ${n.owner}]`}</p> : (
-          <>
-            <textarea className="input mt-1 resize-y" rows={2} defaultValue={n.text} aria-label="Note text" onBlur={(e) => e.target.value.trim() !== n.text && patch(n, { text: e.target.value })} />
-            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
-              <label className="flex items-center gap-1"><input type="checkbox" checked={n.follow_up} onChange={(e) => patch(n, { follow_up: e.target.checked })} /> Follow-up</label>
-              <input className="input w-44" placeholder="Owner (only if explicit)" defaultValue={n.owner ?? ''} onBlur={(e) => (e.target.value || null) !== n.owner && patch(n, { owner: e.target.value || null })} aria-label="Owner" />
-              <select className="input w-44" value={n.agenda_node_id ?? ''} onChange={(e) => patch(n, { agenda_node_id: e.target.value || null })} aria-label="Agenda item"><option value="">(unmapped)</option>{rows.map((r) => <option key={r.node.id} value={r.node.id}>{'· '.repeat(r.depth)}{r.node.text}</option>)}</select>
-              <button className="btn btn-danger" onClick={() => patch(n, { deleted: true })}>Remove</button>
-            </div>
-          </>
-        )}
-        {fs.map((f) => (
-          <div key={f.id} className="mt-1 flex items-start gap-2 text-xs"><span className={`tag ${f.severity === 'high' ? 'tag-bad' : 'tag-warn'}`}>{f.category}</span><span className="flex-1">{f.message}</span>{!readOnly && <button className="underline" onClick={() => resolve(f, true)}>Dismiss</button>}</div>
-        ))}
-      </li>
-    )
-  }
-
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       <div>
@@ -95,13 +64,13 @@ export default function ReviewPanel({ ws, view, transcript, onChange, readOnly }
               <li key={node.id} style={{ marginLeft: depth * 14 }}>
                 <div className="flex items-center justify-between"><span className="font-medium">{node.text}</span>{!readOnly && node.kind === 'topic' && <button className="muted text-xs underline" onClick={() => setAdding(adding === node.id ? null : node.id)}>+ add note</button>}</div>
                 {adding === node.id && <form className="mt-1 flex gap-1" onSubmit={(e) => { e.preventDefault(); addNote(node.id, new FormData(e.currentTarget).get('t') as string) }}><input name="t" className="input" placeholder="Manual note (will be marked unverified unless it matches the transcript)" autoFocus /><button className="btn">Add</button></form>}
-                <ul className="mt-1 space-y-1">{ns.map((n) => <NoteRow key={n.id} n={n} />)}</ul>
+                <ul className="mt-1 space-y-1">{ns.map((n) => <NoteRow key={n.id} n={n} findings={findingsByNote.get(n.id) ?? []} isSel={selected?.id === n.id} onSelect={setSelected} rows={rows} readOnly={readOnly} patch={patch} resolve={resolve} />)}</ul>
                 {ns.length === 0 && node.kind === 'topic' && !issuesOnly && <p className="muted text-xs">Not discussed.</p>}
               </li>
             )
           })}
           {notesFor(null).length > 0 && (
-            <li><div className="font-medium">Unmapped discussion <span className="tag tag-warn">needs an agenda item or removal</span></div><ul className="mt-1 space-y-1">{notesFor(null).map((n) => <NoteRow key={n.id} n={n} />)}</ul></li>
+            <li><div className="font-medium">Unmapped discussion <span className="tag tag-warn">needs an agenda item or removal</span></div><ul className="mt-1 space-y-1">{notesFor(null).map((n) => <NoteRow key={n.id} n={n} findings={findingsByNote.get(n.id) ?? []} isSel={selected?.id === n.id} onSelect={setSelected} rows={rows} readOnly={readOnly} patch={patch} resolve={resolve} />)}</ul></li>
           )}
         </ul>
         {view.undiscussed_follow_ups.length > 0 && (
@@ -129,5 +98,40 @@ export default function ReviewPanel({ ws, view, transcript, onChange, readOnly }
         </div>
       </div>
     </div>
+  )
+}
+
+// Top-level (not defined inside ReviewPanel) so a review refresh re-renders rows instead of remounting them,
+// which would discard text the user is still typing into the uncontrolled fields.
+function NoteRow({ n, findings, isSel, onSelect, rows, readOnly, patch, resolve }: {
+  n: Note; findings: Finding[]; isSel: boolean; onSelect: (n: Note | null) => void; rows: { node: AgendaNode; depth: number }[]
+  readOnly: boolean; patch: (n: Note, body: Record<string, unknown>) => void; resolve: (f: Finding, resolved: boolean) => void
+}) {
+  const [label, cls] = STATUS_LABEL[n.status]
+  const fs = findings.filter((f) => !f.resolved)
+  return (
+    <li className={`rounded-md border p-2 text-sm ${isSel ? 'ring-2' : ''}`} style={{ borderColor: 'var(--line)', ['--tw-ring-color' as string]: 'var(--accent)' }} data-testid="note">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <button className={`tag ${cls}`} onClick={() => onSelect(isSel ? null : n)} title="Show evidence">{label}</button>
+        {n.stale && <span className="tag tag-bad">Source changed — revalidate</span>}
+        <span className="tag tag-muted">{n.category.replaceAll('_', ' ')}</span>
+        {n.calling_event && <span className="tag tag-muted">calling: {n.calling_event.replaceAll('_', ' ')}</span>}
+        <span className="muted ml-auto text-xs">{n.evidence.length} quote(s)</span>
+      </div>
+      {readOnly ? <p className="mt-1">{n.text}{n.follow_up && ' [Follow-up]'}{n.owner && ` [Owner: ${n.owner}]`}</p> : (
+        <>
+          <textarea className="input mt-1 resize-y" rows={2} defaultValue={n.text} aria-label="Note text" onBlur={(e) => e.target.value.trim() !== n.text && patch(n, { text: e.target.value })} />
+          <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
+            <label className="flex items-center gap-1"><input type="checkbox" checked={n.follow_up} onChange={(e) => patch(n, { follow_up: e.target.checked })} /> Follow-up</label>
+            <input className="input w-44" placeholder="Owner (only if explicit)" defaultValue={n.owner ?? ''} onBlur={(e) => (e.target.value || null) !== n.owner && patch(n, { owner: e.target.value || null })} aria-label="Owner" />
+            <select className="input w-44" value={n.agenda_node_id ?? ''} onChange={(e) => patch(n, { agenda_node_id: e.target.value || null })} aria-label="Agenda item"><option value="">(unmapped)</option>{rows.map((r) => <option key={r.node.id} value={r.node.id}>{'· '.repeat(r.depth)}{r.node.text}</option>)}</select>
+            <button className="btn btn-danger" onClick={() => patch(n, { deleted: true })}>Remove</button>
+          </div>
+        </>
+      )}
+      {fs.map((f) => (
+        <div key={f.id} className="mt-1 flex items-start gap-2 text-xs"><span className={`tag ${f.severity === 'high' ? 'tag-bad' : 'tag-warn'}`}>{f.category}</span><span className="flex-1">{f.message}</span>{!readOnly && <button className="underline" onClick={() => resolve(f, true)}>Dismiss</button>}</div>
+      ))}
+    </li>
   )
 }

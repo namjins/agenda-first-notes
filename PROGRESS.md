@@ -15,9 +15,9 @@ Hand-off record for continuing work across sessions. Update when a milestone or 
 
 ## What was actually verified (macOS, M2 Ultra, 2026-11-08)
 
-- `uv run pytest -q`: 33 passed, 1 skipped (real-model test skipped without `AFN_REAL_MODEL`).
+- `uv run pytest -q`: 81 passed, 1 skipped (after review H) (real-model test skipped without `AFN_REAL_MODEL`).
 - `ruff check`, `ruff format --check`, `mypy`: clean.
-- `npm run typecheck`, `npm test` (4 unit tests), `npm run build`: clean.
+- `npm run typecheck`, `npm test` (11 unit tests), `npm run build`: clean.
 - `npm run e2e`: 3 Playwright tests passed in Chromium against the real backend (`AFN_PROVIDER=fake`): token gate, full workflow incl. agenda edit/approve, transcript autosave, generation, evidence highlight, manual edit labelling, approval, clipboard copy, history, workspace isolation in UI/search, dark mode, settings.
 - `agenda-first-notes audit`: passed.
 - Real local model (`qwen3.6:35b-a3b`) via `tests/test_real_model.py`: see "Real model results" below.
@@ -91,7 +91,18 @@ Accuracy / agenda / history (B, C, D). Fixed:
 - Reviewer `add` with high uncertainty stored as verified → stored as `uncertain`.
 - Minor: Markdown/newline injection in note or heading text collapsed; NBSP indentation; agenda edits allowed from review states.
 
-Not fixed (documented limitations, ROADMAP): `looks_overconfident` is lexical; `set_event_date` can create two superseders; `revalidate_notes` re-raises dismissed round-99 findings; Decision `confirmed` is set automatically for low-uncertainty model decisions.
+Not fixed (documented limitations, ROADMAP): `looks_overconfident` is lexical (now applied to every category). The other limitations listed here earlier were fixed in review H.
+
+## Review H — whole-repo adversarial review (2026-11-08)
+
+Three parallel reviewers (data/history, generation pipeline, security/frontend) found 28 issues plus 10 regressions from the B–F fixes; all fixed, each pinned by a test that fails on the previous code (`test_adv_history.py`, `test_adv_pipeline.py`, `test_adv_security.py`, `frontend/src/meetingSafety.test.tsx`). Several B–F fixes above were superseded:
+- Quotes: the 12-char floor rejected real quotes → ≥2 word tokens, at least one not filler; NFC + apostrophe/quote/dash folding.
+- Dedupe: same-category requirement kept near-duplicates → merge to the more cautious category, recompute status, never merge differing calling events.
+- Edits: any edit made the note a user claim → `Note.user_content`/`source_text` (migration 0003); moves/retags become `user_edited` but keep transcript provenance and full checks; regeneration suppresses claims matching any user-touched note on any node.
+- Delete: deletes all meeting content, redacts its audit payloads, `secure_delete` + WAL truncate; follow-ups with outside events are kept but detached (deliberate privacy exception to append-only audit, user-approved).
+Other fixes: edits/transcript/agenda refused during processing and job error path made safe; reviewer rewrite/add re-checked and never auto-verified; owner must be a contiguous name in one quote; completed items and tag look-alikes kept out of the final list; prompt delimiters escaped (`PROMPT_VERSION` 1.1); hedged notes no longer become confirmed decisions; event-date forks, lost follow-up notes, `"new"` audit ids, post-approval meeting edits fixed; UI shortcuts ignore selects, failed agenda save blocks approve, review rows no longer remount, Generate flushes autosave; OCR/parsing off the event loop, streaming body cap, DOCX/PDF decompression caps, legacy reference files deleted, repo-audit gaps closed, CI dependency audits now fail the build.
+
+After review H: `tests/test_real_model.py` with qwen3.6:35b-a3b passed (ready_for_approval, 8 notes, ~44 s); the reviewer now strips `[Owner: Rowan Castellano]` because the speaker label is not named, and the final list includes open-question items ("No decision was reached…") the model tagged as follow-ups. qwen3.5:27b, gpt-oss:20b and CI on Windows/Linux not re-run.
 
 ## Remaining / next steps
 

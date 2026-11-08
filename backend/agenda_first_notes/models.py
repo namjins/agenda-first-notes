@@ -177,6 +177,8 @@ class Note(Stamped, Base):
     evidence: Mapped[list] = mapped_column(JSON, default=list)  # [{"start","end","quote","transcript_version_id"}]
     stale: Mapped[bool] = mapped_column(Boolean, default=False)  # source changed since verification
     deleted: Mapped[bool] = mapped_column(Boolean, default=False)
+    source_text: Mapped[str | None] = mapped_column(Text)  # model text when the user first touched the note
+    user_content: Mapped[bool] = mapped_column(Boolean, default=False)  # text/owner/evidence changed by the user
     updated_at: Mapped[datetime] = mapped_column(default=now, onupdate=now)
     meeting: Mapped[Meeting] = relationship(back_populates="notes")
 

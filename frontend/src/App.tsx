@@ -3,6 +3,7 @@ import { NavLink, Route, Routes, useNavigate } from 'react-router-dom'
 import { api, hasToken } from './api'
 import { WsProvider, useWs } from './ws'
 import type { WorkspaceId } from './types'
+import { isTypingTarget } from './components/ui'
 import Dashboard from './pages/Dashboard'
 import MeetingPage from './pages/MeetingPage'
 import History from './pages/History'
@@ -46,12 +47,11 @@ function Shell() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement
-      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return
+      if (isTypingTarget(e.target)) return
       if (e.altKey || e.metaKey || e.ctrlKey) return
       const hit = NAV.find((n) => n[2] === e.key)
       if (hit) { e.preventDefault(); nav(hit[0]) }
-      if (e.key === 'w') { e.preventDefault(); setWs(ws === 'ward_council' ? 'bishopric' : 'ward_council') }
+      if (e.key === 'w') { e.preventDefault(); setWs(ws === 'ward_council' ? 'bishopric' : 'ward_council'); nav('/') }
       if (e.key === '?') { e.preventDefault(); alert('Shortcuts: 1-7 pages · w switch workspace · g generate · a approve · c copy Markdown · ? help') }
     }
     window.addEventListener('keydown', onKey)

@@ -84,7 +84,7 @@ def validate_tree(nodes: list[AgendaNode]) -> None:
 
 def outline(nodes: list[AgendaNode]) -> str:
     """Compact id-tagged outline given to the model so it can address nodes by id."""
-    return "\n".join(f"{'  ' * d}- [{n.id}] {n.text}" for n, d in walk(nodes))
+    return "\n".join(f"{'  ' * d}- [{n.id}] {' '.join(n.text.split())}" for n, d in walk(nodes))
 
 
 def to_text(nodes: list[AgendaNode]) -> str:

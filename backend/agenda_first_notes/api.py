@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import glob
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -223,11 +224,6 @@ def delete_meeting(ws: WS, meeting_id: str) -> None:
         services.delete_meeting(ws, meeting_id)
     except services.ServiceError as e:
         raise _err(e) from e
-    with session_for(ws) as s:
-        from sqlalchemy import text
-
-        s.execute(text("DELETE FROM search_index WHERE meeting_id = :m"), {"m": meeting_id})
-        s.commit()
 
 
 @router.post("/w/{workspace_id}/meetings/{meeting_id}/reopen")
@@ -285,9 +281,10 @@ def agenda_revisions(ws: WS, meeting_id: str) -> list[dict[str, Any]]:
         ]
 
 
+# Sync routes (run in the threadpool): OCR and document parsing can take minutes and must not block the event loop.
 @router.post("/w/{workspace_id}/meetings/{meeting_id}/agenda/images")
-async def upload_agenda_image(ws: WS, meeting_id: str, file: UploadFile = File(...)) -> dict[str, Any]:  # noqa: B008
-    data = await file.read()
+def upload_agenda_image(ws: WS, meeting_id: str, file: UploadFile = File(...)) -> dict[str, Any]:  # noqa: B008
+    data = file.file.read()
     try:
         fmt = ingest.validate_image(data)
     except ValueError as e:
@@ -701,8 +698,8 @@ def references(ws: WS) -> list[dict[str, Any]]:
 
 
 @router.post("/w/{workspace_id}/references", status_code=201)
-async def upload_reference(ws: WS, file: UploadFile = File(...)) -> dict[str, Any]:  # noqa: B008
-    data = await file.read()
+def upload_reference(ws: WS, file: UploadFile = File(...)) -> dict[str, Any]:  # noqa: B008
+    data = file.file.read()
     try:
         text, kind = ingest.extract_document_text(file.filename or "", data)
     except ValueError as e:
@@ -738,7 +735,10 @@ def delete_reference(ws: WS, doc_id: str) -> None:
         d = s.get(ReferenceDocument, doc_id)
         if d is None:
             raise HTTPException(404, "not found")
-        _reference_path(ws, d.id, d.filename).unlink(missing_ok=True)
+        # Glob on the server-side id prefix so files stored under older naming schemes are removed too.
+        for p in ws.references.glob(f"{glob.escape(d.id)}_*"):
+            if p.parent == ws.references and not p.is_dir():
+                p.unlink(missing_ok=True)  # a symlink is removed itself, never its target
         s.delete(d)
         s.commit()
 

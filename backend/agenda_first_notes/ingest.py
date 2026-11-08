@@ -16,6 +16,8 @@ IMAGE_TYPES = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
 MAX_IMAGE_BYTES = 15 * 1024 * 1024
 MAX_TEXT_BYTES = 20 * 1024 * 1024
 MAX_DOC_BYTES = 50 * 1024 * 1024
+MAX_DOC_EXPANDED_BYTES = 200 * 1024 * 1024  # decompressed ceiling for DOCX parts / PDF page content (zip bombs)
+MAX_PDF_PAGES = 2000
 
 
 def validate_image(data: bytes) -> str:
@@ -93,10 +95,29 @@ def extract_document_text(filename: str, data: bytes) -> tuple[str, str]:
         from pypdf import PdfReader
 
         reader = PdfReader(io.BytesIO(data))
-        return "\n\n".join((p.extract_text() or "") for p in reader.pages), "pdf"
+        if len(reader.pages) > MAX_PDF_PAGES:
+            raise ValueError("PDF has too many pages")
+        parts, expanded = [], 0
+        for page in reader.pages:
+            # shortcut: counts page content streams only; form XObjects rely on pypdf's per-stream output caps.
+            contents = page.get_contents()
+            expanded += len(contents.get_data()) if contents is not None else 0
+            if expanded > MAX_DOC_EXPANDED_BYTES:
+                raise ValueError("PDF content too large when decompressed")
+            parts.append(page.extract_text() or "")
+        return "\n\n".join(parts), "pdf"
     if lower.endswith(".docx"):
+        import zipfile
+
         import docx
 
+        try:
+            with zipfile.ZipFile(io.BytesIO(data)) as z:
+                expanded = sum(i.file_size for i in z.infolist())  # zipfile never inflates past file_size
+        except zipfile.BadZipFile as e:
+            raise ValueError("File is not a valid DOCX document") from e
+        if expanded > MAX_DOC_EXPANDED_BYTES:
+            raise ValueError("DOCX content too large when decompressed")
         d = docx.Document(io.BytesIO(data))
         return "\n".join(p.text for p in d.paragraphs), "docx"
     raise ValueError("Unsupported document type; use TXT, Markdown, PDF or DOCX")

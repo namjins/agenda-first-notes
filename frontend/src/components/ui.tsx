@@ -33,6 +33,12 @@ export function useAsync<T>(fn: () => Promise<T>, deps: unknown[]) {
   return { data, error, loading, reload: () => setTick((t) => t + 1), setData }
 }
 
+// Single-key shortcuts must not fire while the user is typing or choosing (select type-ahead uses letters too).
+export function isTypingTarget(t: EventTarget | null): boolean {
+  const el = t as HTMLElement | null
+  return !!el && (['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName) || el.isContentEditable)
+}
+
 export function StateTag({ state }: { state: string }) {
   const cls = state === 'approved' ? 'tag-ok' : state === 'review_required' || state === 'failed' ? 'tag-bad' : state === 'ready_for_approval' ? 'tag-warn' : 'tag-muted'
   return <span className={`tag ${cls}`}>{state.replaceAll('_', ' ')}</span>

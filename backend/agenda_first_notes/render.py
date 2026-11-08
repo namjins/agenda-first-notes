@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import date
 from typing import Any
 
@@ -30,13 +31,27 @@ def _flat(text: str) -> str:
     return " ".join(text.split())
 
 
+_TAG_LIKE = re.compile(r"\[\s*(?:follow[\s-]*up|owner\s*:[^\]]*)\s*\]", re.I)
+
+
+def clean_text(text: str) -> str:
+    """Flat, with tag look-alikes removed: only validated follow_up/owner fields may render as tags."""
+    return _flat(_TAG_LIKE.sub(" ", text))
+
+
+def is_follow_up(note: dict[str, Any]) -> bool:
+    """Completed items are never follow-ups (rule 10)."""
+    return bool(note.get("follow_up")) and note.get("category") != "completion"
+
+
 def bullet_text(note: dict[str, Any]) -> str:
-    text = _flat(note["text"])
+    text = clean_text(note["text"])
     tags = []
-    if note.get("follow_up"):
+    if is_follow_up(note):
         tags.append("[Follow-up]")
-    if note.get("owner"):
-        tags.append(f"[Owner: {note['owner']}]")
+    owner = _flat((note.get("owner") or "").replace("[", " ").replace("]", " "))
+    if owner:
+        tags.append(f"[Owner: {owner}]")
     return " ".join([text, *tags]) if tags else text
 
 
@@ -100,19 +115,20 @@ def render(
     seen: set[str] = set()
     placed = {n.id for n, _ in walk(tree)}
     for n in sorted(
-        (n for n in notes if n.get("follow_up") and not n.get("deleted") and n.get("agenda_node_id") in placed),
+        (n for n in notes if is_follow_up(n) and not n.get("deleted") and n.get("agenda_node_id") in placed),
         key=lambda x: x.get("position", 0),
     ):
         t = bullet_text({**n, "follow_up": False})
-        key = n["text"].strip().lower().rstrip(".")
+        key = clean_text(n["text"]).lower().rstrip(".")
         if key not in seen:
             seen.add(key)
             items.append(t)
     for t in extra_follow_ups or []:
-        key = t.strip().lower().rstrip(".")
+        t = clean_text(t)
+        key = t.lower().rstrip(".")
         if key and key not in seen:
             seen.add(key)
-            items.append(t.strip())
+            items.append(t)
     if items:
         lines.extend(f"- {t}" for t in items)
     else:
