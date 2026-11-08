@@ -1,0 +1,62 @@
+[project]
+name = "agenda-first-notes"
+version = "0.1.0"
+description = "Local-first meeting notes with exact agenda preservation and evidence-grounded claims."
+requires-python = ">=3.12"
+license = { text = "MIT" }
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "pydantic>=2.8",
+    "sqlalchemy>=2.0",
+    "alembic>=1.13",
+    "platformdirs>=4.2",
+    "ollama>=0.4",
+    "python-multipart>=0.0.9",
+    "pillow>=10.4",
+    "pypdf>=4.3",
+    "python-docx>=1.1",
+]
+
+[project.optional-dependencies]
+ocr = ["pytesseract>=0.3.10"]
+
+[project.scripts]
+agenda-first-notes = "agenda_first_notes.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "httpx>=0.27",
+    "ruff>=0.6",
+    "mypy>=1.11",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["agenda_first_notes"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S", "N"]
+ignore = ["S101", "E501", "N818"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = false
+check_untyped_defs = true
+warn_unused_ignores = false
+ignore_missing_imports = true
+files = ["agenda_first_notes"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
