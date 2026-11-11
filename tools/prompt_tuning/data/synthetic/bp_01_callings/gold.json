@@ -1,0 +1,18 @@
+{"_comment": "SYNTHETIC – fictional meeting, invented names",
+ "workspace": "bishopric",
+ "expected": [
+  {"item": "Primary secretary", "keywords": [["oyelaran"], ["accept"]], "follow_up": false},
+  {"item": "Elders quorum second counselor", "keywords": [["rautenbach"], ["approv"]], "follow_up": true},
+  {"item": "Ward music coordinator", "keywords": [["szablewski"], ["declin"]], "follow_up": false},
+  {"item": "Youth Sunday School teacher", "keywords": [["wexley"], ["extend"]], "follow_up": true},
+  {"item": "Primary secretary release", "keywords": [["tjaden"], ["releas"]], "follow_up": true},
+  {"item": "Ward librarian release", "keywords": [["brandvold"], ["releas"]], "follow_up": true},
+  {"item": "Speakers for next month", "keywords": [["vandermolen"], ["13", "thirteenth"]], "follow_up": true},
+  {"item": "Sustainings and releases to read", "keywords": [["oyelaran"], ["sustain"]], "follow_up": true}
+ ],
+ "not_discussed": ["Temple recommend interviews", "Youth recommend renewals", "Recommend audit", "Nothing"],
+ "forbidden": [
+  {"keywords": [["szablewski"], ["accepted"]], "why": "Sister Szablewski declined the music calling"},
+  {"keywords": [["pemberton"], ["approved to proceed", "extended", "accepted"]], "why": "Sister Pemberton was only floated as a name; nothing was approved or extended"}
+ ],
+ "names": [{"heard": "bill hendrix", "member": "Hendricks, William Arthur"}]}

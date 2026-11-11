@@ -1,0 +1,17 @@
+{"_comment": "SYNTHETIC – fictional meeting, invented names",
+ "workspace": "bishopric",
+ "expected": [
+  {"item": "Bishop Cornelius Lindahl-Mwangi - Bishop > Updates", "keywords": [["conference"], ["21", "twenty-first", "22", "twenty-second"]], "follow_up": false},
+  {"item": "Bishop Cornelius Lindahl-Mwangi - Bishop > Follow-ups", "keywords": [["rautio"], ["mov"], ["14", "fourteenth", "saturday"]], "follow_up": true},
+  {"item": "Brother Ambrose Tiernan - 1st Counselor > Updates", "keywords": [["kovalenko"], ["accept", "sustain"]], "follow_up": true},
+  {"item": "Brother Ambrose Tiernan - 1st Counselor > Follow-ups", "keywords": [["temple"], ["form", "permission"]], "follow_up": true},
+  {"item": "Brother Desmond Ouellette-Bakari - 2nd Counselor > Updates", "keywords": [["haverkamp"], ["extend"]], "follow_up": true},
+  {"item": "Brother Desmond Ouellette-Bakari - 2nd Counselor > Follow-ups", "keywords": [["missionar"], ["dinner", "meal", "calendar"]], "follow_up": true},
+  {"item": "Brother Galen Achterhof - Ward Clerk > Updates", "keywords": [["audit"], ["complet", "done", "clean", "no finding"]], "follow_up": false},
+  {"item": "Brother Galen Achterhof - Ward Clerk > Follow-ups", "keywords": [["record"], ["request"]], "follow_up": true}
+ ],
+ "not_discussed": ["Brother Ambrose Tiernan - 1st Counselor > Nothing", "Brother Hollis Zabrinski - Executive Secretary", "Brother Hollis Zabrinski - Executive Secretary > Updates", "Brother Hollis Zabrinski - Executive Secretary > Nothing"],
+ "forbidden": [
+  {"keywords": [["haverkamp"], ["accepted", "sustain"]], "why": "the Relief Society teacher calling was extended to Sister Haverkamp but she has not answered"}
+ ],
+ "names": [{"heard": "Brother Petterson", "member": "Peterson, Mark Allen"}]}

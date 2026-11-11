@@ -1,4 +1,5 @@
-"""Workspace registry. Every workspace has its own directory, SQLite database and files.
+"""Workspace registry. Every workspace has its own directory, SQLite database and files. The one exception is the
+member list, shared by both workspaces in <data>/members.sqlite3 (maintainer decision 2026-11-08).
 
 Workspace ids are a closed set validated here; no client-supplied path ever becomes a boundary.
 """
@@ -7,6 +8,7 @@ from __future__ import annotations
 
 import os
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -15,6 +17,7 @@ from sqlalchemy import Engine, create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 
 from . import config
+from .models import SharedBase
 
 WorkspaceId = Literal["ward_council", "bishopric"]
 WORKSPACES: dict[str, str] = {"ward_council": "Ward Council", "bishopric": "Bishopric"}
@@ -86,10 +89,15 @@ def get_workspace(workspace_id: str) -> Workspace:
 
 
 def engine_for(ws: Workspace) -> Engine:
-    key = (ws.db_path, ws.id)
+    return _engine(ws.db_path, ws.id)
+
+
+def _engine(path: Path, key_id: str) -> Engine:
+    key = (path, key_id)
     eng = _engines.get(key)
     if eng is None:
-        eng = create_engine(f"sqlite:///{ws.db_path}", connect_args={"check_same_thread": False})
+        # hide_parameters: SQL errors never echo row values (member names, transcript text) into logs or replies
+        eng = create_engine(f"sqlite:///{path}", connect_args={"check_same_thread": False}, hide_parameters=True)
 
         @event.listens_for(eng, "connect")
         def _pragmas(dbapi_conn, _record):  # type: ignore[no-untyped-def]
@@ -105,6 +113,44 @@ def engine_for(ws: Workspace) -> Engine:
 
 def session_for(ws: Workspace) -> Session:
     return sessionmaker(bind=engine_for(ws), expire_on_commit=False)()
+
+
+def members_db_path() -> Path:
+    """The member list both workspaces share (maintainer decision 2026-11-08): the only data outside a workspace."""
+    return config.data_dir() / "members.sqlite3"
+
+
+def members_engine() -> Engine:
+    path = members_db_path()
+    fresh = (path, "members") not in _engines
+    eng = _engine(path, "members")
+    if fresh:
+        # shortcut: one table, created if missing (no Alembic); add a migration path if its schema ever changes
+        SharedBase.metadata.create_all(eng)
+    return eng
+
+
+def members_session() -> Session:
+    return sessionmaker(bind=members_engine(), expire_on_commit=False)()
+
+
+def checkpoint(db: Workspace | Engine, tries: int = 3) -> bool:
+    """Move committed pages out of the WAL file and truncate it, so deleted or replaced data does not linger there
+    (secure_delete zeroes freed pages in the database file only). False when readers kept it busy throughout; each
+    try waits at most 0.5 s for them, so the caller's warning comes within about 2 s. `db`: a workspace or an engine
+    (members_engine() for the shared member list)."""
+    with (db if isinstance(db, Engine) else engine_for(db)).connect() as conn:
+        prev = int(conn.exec_driver_sql("PRAGMA busy_timeout").scalar() or 0)
+        conn.exec_driver_sql("PRAGMA busy_timeout=500")
+        try:
+            for i in range(tries):
+                busy = conn.exec_driver_sql("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+                if busy is None or not busy[0]:
+                    return True
+                time.sleep(0.05 * (i + 1))
+            return False
+        finally:
+            conn.exec_driver_sql(f"PRAGMA busy_timeout={prev}")  # the pooled connection keeps its usual timeout
 
 
 def reset_engines() -> None:

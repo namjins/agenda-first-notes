@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from . import config, db, jobs
 from .api import router
 from .security import LocalOnlyMiddleware
-from .workspaces import WORKSPACES, get_workspace
+from .workspaces import WORKSPACES, checkpoint, get_workspace, members_engine
 
 FRONTEND_DIST = config.REPO_ROOT / "frontend" / "dist"
 
@@ -31,9 +31,18 @@ def init_storage() -> None:
     for wid in WORKSPACES:
         ws = get_workspace(wid)
         db.migrate(ws)
-        jobs.recover_interrupted(ws)
+        checkpoint(ws)  # a member list dropped by migration 0007 does not linger in the WAL
         for path in (ws.root, ws.uploads, ws.references, ws.exports, *ws.root.glob("notes.sqlite3*")):
             _private(path)
+    members_engine()  # the shared member list (both workspaces), created if missing
+    for path in d.glob("members.sqlite3*"):
+        _private(path)
+
+
+def recover_jobs() -> None:
+    """Only the process that runs the job worker (the served app) recovers jobs; `migrate` never does."""
+    for wid in WORKSPACES:
+        jobs.recover_interrupted(get_workspace(wid))
 
 
 def _private(path: Path) -> None:
@@ -46,6 +55,7 @@ def _private(path: Path) -> None:
 @asynccontextmanager
 async def _lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     init_storage()
+    recover_jobs()
     yield
 
 

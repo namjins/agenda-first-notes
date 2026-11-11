@@ -1,0 +1,17 @@
+{"_comment": "SYNTHETIC – fictional meeting, invented names; no agenda.txt, so the app proposes the headings",
+ "workspace": "ward_council",
+ "expected": [
+  {"item": null, "keywords": [["food bank"], ["14", "fourteenth"]], "follow_up": null},
+  {"item": null, "keywords": [["sign-up", "sign up", "signup"], ["halvorsen"]], "follow_up": true},
+  {"item": null, "keywords": [["meal"], ["three"]], "follow_up": null},
+  {"item": null, "keywords": [["ride", "physical therapy"]], "follow_up": true},
+  {"item": null, "keywords": [["clean"], ["pellworth", "elders quorum"]], "follow_up": true},
+  {"item": null, "keywords": [["missionar", "dinner"], ["clipboard"]], "follow_up": null}
+ ],
+ "topics": [["food bank", "service project"], ["dunmore", "surgery", "meal"], ["clean"], ["missionar", "dinner"]],
+ "max_headings": 6,
+ "reference_notes": "reference.txt",
+ "forbidden": [
+  {"keywords": [["youth"], ["will clean", "assigned to clean", "agreed to clean", "will take"]], "why": "asking the youth to clean was only an idea"},
+  {"keywords": [["game"]], "why": "small talk about a game is not an outcome"}
+ ]}

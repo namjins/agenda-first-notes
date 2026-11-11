@@ -57,7 +57,7 @@ export default function History() {
           </Section>
           <Section title="Calling events">
             <table className="w-full text-sm"><thead className="muted text-left text-xs"><tr><th>When</th><th>Person</th><th>Calling</th><th>Event</th><th>Note</th><th>Origin</th></tr></thead>
-              <tbody>{(callings.data?.events ?? []).map((c) => <tr key={c.id} className="border-t" style={{ borderColor: 'var(--line)' }}><td className="py-1.5 muted">{new Date(c.created_at).toLocaleDateString()}</td><td>{c.person ?? <span className="muted">unclear</span>}</td><td>{c.calling ?? '—'}</td><td><span className="tag tag-muted">{c.event_type.replaceAll('_', ' ')}</span></td><td>{c.note}</td><td className="muted">{c.origin}{c.meeting_id && <> · <Link className="underline" to={`/meetings/${c.meeting_id}`}>meeting</Link></>}</td></tr>)}</tbody></table>
+              <tbody>{(callings.data?.events ?? []).map((c) => <tr key={c.id} className="border-t" style={{ borderColor: 'var(--line)' }}><td className="py-1.5 muted">{new Date(c.created_at).toLocaleDateString()}</td><td>{c.person ?? <span className="muted">unclear</span>}</td><td>{c.calling ?? '—'}</td><td><span className="tag tag-muted">{c.event_type.replaceAll('_', ' ')}</span>{c.status && <span className="tag tag-warn ml-1">{c.status}</span>}</td><td>{c.note}</td><td className="muted">{c.origin}{c.meeting_id && <> · <Link className="underline" to={`/meetings/${c.meeting_id}`}>meeting</Link></>}</td></tr>)}</tbody></table>
           </Section>
         </>
       )}
@@ -65,7 +65,7 @@ export default function History() {
         <Section title="Scheduled events (dates are never overwritten; changes are recorded)">
           <ul className="space-y-2 text-sm">{(events.data ?? []).map((e) => (
             <li key={e.id} className="flex items-center justify-between gap-3 border-t pt-2" style={{ borderColor: 'var(--line)' }}>
-              <div>{e.title} <span className="muted">· {e.event_date ?? 'date not stated'}</span>{e.supersedes_id && <span className="tag tag-warn ml-2">changed</span>}</div>
+              <div>{e.title} <span className="muted">· {e.event_date ?? 'date not stated'}</span>{e.supersedes_id && <span className="tag tag-warn ml-2">changed</span>}{e.status && <span className="tag tag-warn ml-2">{e.status}</span>}</div>
               <form className="flex gap-1" onSubmit={async (ev) => { ev.preventDefault(); const f = new FormData(ev.currentTarget); try { await api.post(api.w(ws, `/events/${e.id}/date`), { event_date: f.get('d'), note: f.get('n') }); events.reload() } catch (x) { setErr(x) } }}>
                 <input name="d" className="input w-32" placeholder="New date" required /><input name="n" className="input w-40" placeholder="Reason" /><button className="btn">Record change</button>
               </form>

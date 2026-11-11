@@ -1,0 +1,17 @@
+{"_comment": "SYNTHETIC – fictional meeting, invented names",
+ "workspace": "bishopric",
+ "expected": [
+  {"item": "Sacrament meeting speakers", "keywords": [["haverkamp", "diallo"], ["15", "fifteenth", "speak", "invite"]], "follow_up": true},
+  {"item": "Youth interviews", "keywords": [["ashdown", "mensah"], ["schedul"]], "follow_up": true},
+  {"item": "Ward budget", "keywords": [["300", "three hundred"], ["young women", "yw"]], "follow_up": false},
+  {"item": "Primary pianist", "keywords": [["pettigrew", "amadi"], ["suggest", "consider", "pray", "revisit", "next week"]], "follow_up": null},
+  {"item": "Release: Sunday school teacher", "keywords": [["wexford", "bah"], ["releas"]], "follow_up": true},
+  {"item": "Ward conference preparation", "keywords": [["roster"], ["quintanilla", "22", "twenty-second", "twenty second"]], "follow_up": true},
+  {"item": "Building keys", "keywords": [["key"], ["library"]], "follow_up": true},
+  {"item": "Ward calendar review", "keywords": [["devotional"], ["20", "twentieth"]], "follow_up": false}
+ ],
+ "not_discussed": ["Ward clerk assistant"],
+ "forbidden": [
+  {"keywords": [["pettigrew", "amadi"], ["approved to proceed", "will be extended", "was extended", "accepted", "sustain"]], "why": "Sister Pettigrew-Amadi was only suggested; no decision was made"},
+  {"keywords": [["lindgren", "okoro"], ["pianist"], ["extended", "[owner"]], "why": "the Lindgren-Okoro girl was only mentioned in passing"}
+ ]}

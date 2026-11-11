@@ -37,6 +37,7 @@ export interface Note {
   evidence: Evidence[]
   stale: boolean
   deleted: boolean
+  name_confirmed?: boolean // passes the name check only thanks to a name the user confirmed (stored when derived)
 }
 
 export interface Finding {
@@ -77,11 +78,18 @@ export interface FollowUp {
 }
 
 export interface Decision { id: string; meeting_id: string; agenda_topic: string | null; text: string; status: string; origin: string; evidence: Evidence[]; created_at: string }
-export interface CallingEvent { id: string; meeting_id: string | null; person: string | null; calling: string | null; event_type: string; note: string | null; origin: string; evidence: Evidence[]; created_at: string }
-export interface ScheduledEvent { id: string; meeting_id: string | null; title: string; event_date: string | null; supersedes_id: string | null; origin: string; created_at: string }
+export interface CallingEvent { id: string; meeting_id: string | null; person: string | null; calling: string | null; event_type: string; note: string | null; origin: string; evidence: Evidence[]; status: string | null; created_at: string }
+export interface ScheduledEvent { id: string; meeting_id: string | null; title: string; event_date: string | null; supersedes_id: string | null; origin: string; status: string | null; created_at: string }
 export interface AuditEvent { id: string; entity_type: string; entity_id: string; meeting_id: string | null; action: string; prev: unknown; new: unknown; source: string; created_at: string }
 export interface SearchHit { entity_type: string; entity_id: string; meeting_id: string; meeting_date: string; status: string; title: string; snippet: string }
 export interface ReferenceDoc { id: string; filename: string; kind: string; sha256: string; length: number; use_as_glossary: boolean; created_at: string }
+
+export interface Member { preferred_name: string; full_name: string; spouse_name: string; callings: { calling: string; sustained: string }[] }
+export interface NameCandidate { member_id: string; full_name: string; name: string; preferred: string; callings: string[]; reason: string; score: number }
+export interface NameSuggestion { heard: string; start: number; count: number; quotes: string[]; agenda_item: string | null; orgs: string[]; candidates: NameCandidate[] }
+export interface NameAnswer { id: string; heard: string; name: string; preferred: string; status: 'confirmed' | 'rejected'; member_id: string | null; in_transcript: boolean }
+export interface AgendaNameSuggestion { node_id: string; start: number; end: number; written: string; candidates: { member_id: string; name: string; callings: string[] }[] }
+export interface NameSuggestions { member_count: number; suggestions: NameSuggestion[]; answers: NameAnswer[]; needs_regeneration: boolean }
 
 export interface ModelInfo { name: string; size_bytes: number | null; parameter_size: string | null; family: string | null; capabilities: string[] }
 export interface ModelsResponse { connected: boolean; host: string; models: ModelInfo[]; warnings: string[]; ocr_backends?: string[] }

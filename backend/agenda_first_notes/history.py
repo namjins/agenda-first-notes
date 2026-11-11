@@ -247,13 +247,18 @@ def set_event_date(ws: Workspace, event_id: str, event_date: str, note: str | No
         old = s.get(ScheduledEvent, event_id)
         if old is None:
             raise NotFound("event not found")
-        # Changing an already-superseded record changes the current one; never fork the chain.
+        # Changing an already-superseded record changes the current one; never fork the chain (a fork left by
+        # older versions is followed along its newest branch).
+        newest = (ScheduledEvent.created_at.desc(), ScheduledEvent.id.desc())
         while (
-            nxt := s.scalars(select(ScheduledEvent).where(ScheduledEvent.supersedes_id == old.id)).first()
+            nxt := s.scalars(
+                select(ScheduledEvent).where(ScheduledEvent.supersedes_id == old.id).order_by(*newest)
+            ).first()
         ) is not None:
             old = nxt
         if old.event_date is None:
             old.event_date = event_date.strip()[:40]
+            old.origin = "user"  # the date is the user's, not the transcript's
             audit(
                 s,
                 "scheduled_event",

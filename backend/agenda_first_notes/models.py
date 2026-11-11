@@ -1,11 +1,11 @@
-"""SQLAlchemy ORM. One schema, instantiated once per workspace database."""
+"""SQLAlchemy ORM. One schema (Base), instantiated once per workspace database, plus the shared member list (SharedBase)."""
 
 from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, Boolean, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, Boolean, Float, ForeignKey, Index, Integer, String, Text, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -18,6 +18,12 @@ def new_id() -> str:
 
 
 class Base(DeclarativeBase):
+    type_annotation_map = {dict: JSON, list: JSON}
+
+
+class SharedBase(DeclarativeBase):
+    """Tables of the one store both workspaces share (<data>/members.sqlite3); never in a workspace database."""
+
     type_annotation_map = {dict: JSON, list: JSON}
 
 
@@ -178,7 +184,10 @@ class Note(Stamped, Base):
     stale: Mapped[bool] = mapped_column(Boolean, default=False)  # source changed since verification
     deleted: Mapped[bool] = mapped_column(Boolean, default=False)
     source_text: Mapped[str | None] = mapped_column(Text)  # model text when the user first touched the note
+    source_node_id: Mapped[str | None] = mapped_column(String(32))  # agenda node of that model text
     user_content: Mapped[bool] = mapped_column(Boolean, default=False)  # text/owner/evidence changed by the user
+    # its names pass only thanks to a user-confirmed name: set when the status is derived, never computed live
+    name_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
     updated_at: Mapped[datetime] = mapped_column(default=now, onupdate=now)
     meeting: Mapped[Meeting] = relationship(back_populates="notes")
 
@@ -287,6 +296,7 @@ class CallingEvent(Stamped, Base):
     calling: Mapped[str | None] = mapped_column(String(200))
     event_type: Mapped[str] = mapped_column(String(32))
     note: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str | None] = mapped_column(String(16))  # None | unverified (gone from later approved notes)
     origin: Mapped[str] = mapped_column(String(16), default="transcript")
     evidence: Mapped[list] = mapped_column(JSON, default=list)
 
@@ -300,6 +310,7 @@ class ScheduledEvent(Stamped, Base):
     title: Mapped[str] = mapped_column(Text)
     event_date: Mapped[str | None] = mapped_column(String(40))  # as stated; may be non-ISO text
     supersedes_id: Mapped[str | None] = mapped_column(String(32))
+    status: Mapped[str | None] = mapped_column(String(16))  # None | unverified (gone from later approved notes)
     origin: Mapped[str] = mapped_column(String(16), default="transcript")
     evidence: Mapped[list] = mapped_column(JSON, default=list)
 
@@ -324,3 +335,39 @@ class ReferenceDocument(Stamped, Base):
     sha256: Mapped[str] = mapped_column(String(64))
     text: Mapped[str] = mapped_column(Text)
     use_as_glossary: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class Member(Stamped, SharedBase):
+    """One row of the imported member list, shared by both workspaces (maintainer decision 2026-11-08). Used only to
+    suggest names for the user to confirm; never evidence (rules 3, 8), never indexed, logged or exported. Import
+    replaces the whole list, so member ids change on every import."""
+
+    __tablename__ = "members"
+    preferred_name: Mapped[str] = mapped_column(String(200), default="")  # "Last, First"
+    full_name: Mapped[str] = mapped_column(String(200))  # "Last, First Middle"
+    spouse_name: Mapped[str] = mapped_column(String(200), default="")
+    callings: Mapped[list] = mapped_column(JSON, default=list)  # [{"calling": str, "sustained": "5 Jan 2025"}]
+
+
+class NameConfirmation(Stamped, Base):
+    """The user's answer to a name suggestion for one meeting: heard text -> member name, confirmed or rejected."""
+
+    __tablename__ = "name_confirmations"
+    # one confirmed name per heard text and meeting, whatever its case ("Bob Boss" = "bob boss")
+    # shortcut: SQLite lower() folds ASCII only, so "Ås" and "ås" may both be confirmed; add a folded column if it matters
+    __table_args__ = (
+        Index(
+            "uq_confirmed_heard",
+            "meeting_id",
+            text("lower(heard)"),
+            unique=True,
+            sqlite_where=text("status = 'confirmed'"),
+        ),
+    )
+    meeting_id: Mapped[str] = mapped_column(ForeignKey("meetings.id", ondelete="CASCADE"), index=True)
+    heard: Mapped[str] = mapped_column(String(120))
+    name: Mapped[str] = mapped_column(String(200))  # full name, "First Middle Last"
+    preferred: Mapped[str] = mapped_column(String(200), default="")  # preferred name, "First Last"
+    status: Mapped[str] = mapped_column(String(16))  # confirmed | rejected
+    # the shared-list member answered about (names may repeat); stale after a re-import, so rejections fall back to name
+    member_id: Mapped[str | None] = mapped_column(String(32))

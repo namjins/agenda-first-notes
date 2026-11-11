@@ -28,6 +28,7 @@ class GenerateRequest:
     num_ctx: int = 32768
     max_tokens: int = 4096
     purpose: str = "extract"  # extract | review | agenda | ocr | test
+    think: bool = False  # let reasoning models think first (slower; uses part of max_tokens)
 
 
 class ModelProvider(Protocol):

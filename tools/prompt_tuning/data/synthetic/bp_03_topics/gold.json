@@ -1,0 +1,16 @@
+{"_comment": "SYNTHETIC – fictional meeting, invented names",
+ "workspace": "bishopric",
+ "expected": [
+  {"item": "Sacrament meeting Christmas program", "keywords": [["20", "twentieth"], ["program", "choir", "primary"]], "follow_up": false},
+  {"item": "Sacrament meeting Christmas program", "keywords": [["vantongeren"], ["choir", "direct"]], "follow_up": false},
+  {"item": "Sacrament meeting Christmas program", "keywords": [["19", "nineteenth"], ["rehears"]], "follow_up": false},
+  {"item": "Sacrament meeting speakers", "keywords": [["kettleborough"], ["13", "thirteenth"]], "follow_up": true},
+  {"item": "Sacrament meeting speakers", "keywords": [["27", "twenty-seventh"], ["open", "undecided", "not yet", "tbd", "to be determined", "no speaker"]], "follow_up": null},
+  {"item": "Building cleaning assignments", "keywords": [["oyelowo", "elders quorum"], ["clean", "recruit", "saturday", "cover"]], "follow_up": true},
+  {"item": "Building cleaning assignments", "keywords": [["relief society"], ["ask", "clean", "cover"]], "follow_up": true}
+ ],
+ "not_discussed": ["Ward Christmas party"],
+ "forbidden": [
+  {"keywords": [["christmas"], ["gluten", "bread"]], "why": "gluten-free bread is not about the Christmas program"},
+  {"keywords": [["stravinskaite", "pfefferkorn", "celiac"], ["speaker", "speak", "choir"]], "why": "the gluten-free sacrament bread discussion is not on the agenda and does not belong under speakers or the choir"}
+ ]}

@@ -10,6 +10,7 @@ import History from './pages/History'
 import Inbox from './pages/Inbox'
 import SearchPage from './pages/SearchPage'
 import References from './pages/References'
+import Members from './pages/Members'
 import SettingsPage from './pages/SettingsPage'
 
 const NAV = [
@@ -19,7 +20,8 @@ const NAV = [
   ['/inbox', 'Follow-Up Inbox', '4'],
   ['/search', 'Search', '5'],
   ['/references', 'Reference Documents', '6'],
-  ['/settings', 'Settings', '7'],
+  ['/members', 'Members', '7'],
+  ['/settings', 'Settings', '8'],
 ] as const
 
 function useTheme() {
@@ -52,7 +54,7 @@ function Shell() {
       const hit = NAV.find((n) => n[2] === e.key)
       if (hit) { e.preventDefault(); nav(hit[0]) }
       if (e.key === 'w') { e.preventDefault(); setWs(ws === 'ward_council' ? 'bishopric' : 'ward_council'); nav('/') }
-      if (e.key === '?') { e.preventDefault(); alert('Shortcuts: 1-7 pages · w switch workspace · g generate · a approve · c copy Markdown · ? help') }
+      if (e.key === '?') { e.preventDefault(); alert('Shortcuts: 1-8 pages · w switch workspace · g generate · a approve · c copy Markdown · ? help') }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -96,6 +98,7 @@ function Shell() {
           <Route path="/inbox" element={<Inbox />} />
           <Route path="/search" element={<SearchPage />} />
           <Route path="/references" element={<References />} />
+          <Route path="/members" element={<Members />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Routes>
       </main>

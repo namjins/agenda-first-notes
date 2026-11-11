@@ -27,7 +27,7 @@ def test_real_model_ward_council(data_dir) -> None:  # type: ignore[no-untyped-d
     s = config.load_settings()
     s.models.primary_model = MODEL
     s.models.max_review_rounds = 1
-    s.models.max_output_tokens = int(os.environ.get("AFN_REAL_MODEL_TOKENS", "4096"))
+    s.models.max_output_tokens = int(os.environ.get("AFN_REAL_MODEL_TOKENS", "12288"))
     config.save_settings(s)
     from agenda_first_notes import db
 

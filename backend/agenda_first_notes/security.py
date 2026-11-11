@@ -24,6 +24,11 @@ LOOPBACK = {"127.0.0.1", "localhost", "::1", "[::1]"}
 
 
 MAX_BODY_BYTES = 60 * 1024 * 1024
+# Everything is served from this origin; blob: is for agenda images fetched with the token. No framing (clickjacking).
+CSP = (
+    "default-src 'self'; img-src 'self' blob:; object-src 'none'; base-uri 'none'; "
+    "form-action 'self'; frame-ancestors 'none'"
+)
 
 
 def _host_only(value: str) -> str:
@@ -93,6 +98,7 @@ class LocalOnlyMiddleware:
                 headers.setdefault("X-Content-Type-Options", "nosniff")
                 headers.setdefault("Referrer-Policy", "no-referrer")
                 headers.setdefault("Cache-Control", "no-store")
+                headers.setdefault("Content-Security-Policy", CSP)
             await send(message)
 
         refusal = self.refuse(Request(scope))

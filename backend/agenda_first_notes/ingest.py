@@ -97,11 +97,15 @@ def extract_document_text(filename: str, data: bytes) -> tuple[str, str]:
         reader = PdfReader(io.BytesIO(data))
         if len(reader.pages) > MAX_PDF_PAGES:
             raise ValueError("PDF has too many pages")
-        parts, expanded = [], 0
+        parts, expanded, decoded = [], 0, [0]
+        costs: dict[int, int] = {}
         for page in reader.pages:
-            # shortcut: counts page content streams only; form XObjects rely on pypdf's per-stream output caps.
+            # shortcut: fonts and CMaps rely on pypdf's own per-stream caps.
             contents = page.get_contents()
-            expanded += len(contents.get_data()) if contents is not None else 0
+            if contents is not None:
+                expanded += len(contents.get_data())  # charged before it is parsed below
+                if expanded <= MAX_DOC_EXPANDED_BYTES:
+                    expanded += _pdf_xobject_cost(contents, page, reader, costs, set(), decoded)
             if expanded > MAX_DOC_EXPANDED_BYTES:
                 raise ValueError("PDF content too large when decompressed")
             parts.append(page.extract_text() or "")
@@ -121,6 +125,41 @@ def extract_document_text(filename: str, data: bytes) -> tuple[str, str]:
         d = docx.Document(io.BytesIO(data))
         return "\n".join(p.text for p in d.paragraphs), "docx"
     raise ValueError("Unsupported document type; use TXT, Markdown, PDF or DOCX")
+
+
+def _pdf_xobject_cost(
+    content: Any, owner: Any, reader: Any, costs: dict[int, int], open_forms: set[int], decoded: list[int]
+) -> int:
+    """Bytes extract_text parses for the XObjects this content runs: pypdf re-parses the XObject named by each
+    `/Name Do` on every call, as a form unless it is an /Image, nested calls included. Each distinct form is
+    decoded and parsed here once (bounded by `decoded`); cyclic forms are refused."""
+    from pypdf._page import _get_page_resources  # the exact resource lookup extract_text uses
+    from pypdf.generic import ContentStream
+
+    xobjects = _get_page_resources(owner).get("/XObject")
+    xobjects = xobjects.get_object() if xobjects is not None else {}
+    total = 0
+    for operands, op in content.operations:
+        if op != b"Do" or not operands or not isinstance(operands[0], str) or not isinstance(xobjects, dict):
+            continue
+        ref = xobjects.get(operands[0])
+        x: Any = ref.get_object() if ref is not None else None
+        if not hasattr(x, "get_data") or x.get("/Subtype") == "/Image":
+            continue
+        if id(x) in open_forms:
+            raise ValueError("PDF has a cyclic form reference")
+        if id(x) not in costs:
+            body = x.get_data()
+            decoded[0] += len(body)
+            if decoded[0] > MAX_DOC_EXPANDED_BYTES:
+                raise ValueError("PDF content too large when decompressed")
+            open_forms.add(id(x))
+            costs[id(x)] = len(body) + _pdf_xobject_cost(
+                ContentStream(x, reader), x, reader, costs, open_forms, decoded
+            )
+            open_forms.discard(id(x))
+        total += costs[id(x)]
+    return total
 
 
 def test_inference(model: str) -> dict[str, Any]:

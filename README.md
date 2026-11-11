@@ -12,7 +12,7 @@ Built for two separate workspaces out of the box — **Ward Council** and **Bish
 2. Add the agenda — paste a screenshot (⌘V / Ctrl+V), drop PNG/JPEG/WebP files, paste text, or type it. Fix the extracted tree (indent, reorder, edit) and **approve** it. The approved agenda is immutable; later edits create a new revision.
 3. Paste the transcript (autosaved and versioned; corrections are explicit and auditable).
 4. **Generate notes.** The transcript is split into overlapping segments and processed by your local model. Every proposed note must cite verbatim transcript quotes; quotes that do not exist are rejected, inferred owners are stripped, overconfident wording is flagged.
-5. **Adversarial review** runs up to N rounds (default 3) with an optional second model. If it does not converge, the meeting is marked *Review Required* instead of pretending.
+5. **Adversarial review** (optional, off by default; Settings → review rounds) runs up to N rounds with an optional second model. The built-in checks (quotes must exist, unnamed owners removed) always run. If it does not converge, the meeting is marked *Review Required* instead of pretending.
 6. Review with evidence: click a note to highlight its supporting passage. *Issues only* mode shows just the problems. Edit freely — your edits are preserved on regeneration and labelled *User corrected* or *Manual, unverified*, never *Source verified*.
 7. **Approve**, then copy clean Markdown or export `.md` / `.txt`. The Markdown is rendered deterministically from the approved agenda tree — the model never controls headings or hierarchy.
 8. Approved notes feed the **Follow-Up Inbox**, **Decisions**, **Calling events** (Bishopric) and **Search** — as *proposals* you confirm, with evidence attached. Nothing in history is ever used to fill gaps in a new meeting's notes.
@@ -69,7 +69,7 @@ Next Meeting – Follow-Up Items
 ```sh
 brew install uv node ollama          # or install each from its website
 ollama serve &                       # if not already running as a service
-ollama pull qwen3.5:27b              # any local model; smaller ones work too
+ollama pull qwen3.8:27b              # any local model; smaller ones work too
 git clone https://github.com/<you>/agenda-first-notes.git
 cd agenda-first-notes
 python3 run.py
@@ -80,7 +80,7 @@ Optional OCR fallback: `brew install tesseract`.
 ### Windows
 
 1. Install [Python 3.12+](https://www.python.org/downloads/) (tick "Add to PATH"), [uv](https://docs.astral.sh/uv/getting-started/installation/), [Node.js LTS](https://nodejs.org) and [Ollama for Windows](https://ollama.com/download/windows).
-2. In a terminal: `ollama pull qwen3.5:27b` (or a smaller model).
+2. In a terminal: `ollama pull qwen3.8:27b` (or a smaller model).
 3. `git clone https://github.com/<you>/agenda-first-notes.git`, `cd agenda-first-notes`, then `py run.py`.
 
 Optional OCR fallback: install Tesseract (UB Mannheim builds) and make sure `tesseract.exe` is on PATH.
@@ -91,7 +91,7 @@ Optional OCR fallback: install Tesseract (UB Mannheim builds) and make sure `tes
 curl -LsSf https://astral.sh/uv/install.sh | sh
 curl -fsSL https://ollama.com/install.sh | sh
 sudo apt install nodejs npm         # or your distro's packages (Node 20+)
-ollama pull qwen3.5:27b
+ollama pull qwen3.8:27b
 git clone https://github.com/<you>/agenda-first-notes.git
 cd agenda-first-notes
 python3 run.py
@@ -101,7 +101,7 @@ Optional OCR fallback: `sudo apt install tesseract-ocr`.
 
 ## Launch
 
-`python run.py` (or `py run.py` on Windows) builds the UI the first time, then starts the local server and opens your browser at a URL like
+`python3 run.py` (or `py run.py` on Windows) builds the UI the first time, then starts the local server and opens your browser at a URL like
 
 ```
 http://127.0.0.1:8765/#token=…
@@ -115,6 +115,8 @@ Advanced: `uv run --directory backend agenda-first-notes serve --port 9000 --no-
 
 Open **Settings**. The app lists models installed in your local Ollama, lets you pick a primary extraction model, an optional independent reviewer model, and an optional vision model for screenshots, and runs a synthetic test inference against each. Cloud or remote endpoints are refused.
 
+Recommended: `qwen3.8:27b` (it can also read agenda screenshots). In the maintainer's tests it found the most facts and filed them best of the local models tried, at about 5–6 minutes per meeting on an M2 Ultra; `qwen3.6:35b-a3b` is about 3× faster but misses and misfiles more.
+
 ## Where your data lives
 
 Never in this folder. The app uses the OS application-data directory via `platformdirs`:
@@ -125,7 +127,7 @@ Never in this folder. The app uses the OS application-data directory via `platfo
 | Windows | `%LOCALAPPDATA%\AgendaFirstNotes\` |
 | Linux | `~/.local/share/AgendaFirstNotes/` |
 
-Inside: `settings.json` (model settings only), `api_token`, and `workspaces/ward_council/` and `workspaces/bishopric/`, each with its own `notes.sqlite3`, `uploads/`, `references/`, `exports/`. Override with the `AFN_DATA_DIR` environment variable. `agenda-first-notes paths` prints the resolved locations. Deleting a meeting in the UI deletes its database rows and uploaded images.
+Inside: `settings.json` (model settings only), `api_token`, and `workspaces/ward_council/` and `workspaces/bishopric/`, each with its own `notes.sqlite3`, `uploads/`, `references/`, `exports/`. The member list, if you load one, is shared by both workspaces in `members.sqlite3`. Override with the `AFN_DATA_DIR` environment variable. `agenda-first-notes paths` prints the resolved locations. Deleting a meeting in the UI deletes its database rows and uploaded images.
 
 ## Privacy and limitations
 

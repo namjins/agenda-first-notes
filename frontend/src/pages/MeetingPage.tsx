@@ -4,7 +4,9 @@ import { ApiError, api, describeError } from '../api'
 import { useWs } from '../ws'
 import type { AgendaNode, Job, Meeting, ReviewView } from '../types'
 import AgendaEditor from '../components/AgendaEditor'
+import { toText } from '../agendaTree'
 import ReviewPanel from '../components/ReviewPanel'
+import NameSuggestions, { AgendaNameCheck } from '../components/NameSuggestions'
 import { ErrorBox, Section, StateTag, copyText, fmtDate, isTypingTarget, useAsync } from '../components/ui'
 
 // Images are fetched with the token header and shown as blob URLs; the token never goes into a URL.
@@ -73,10 +75,18 @@ function MeetingWorkflow({ id }: { id: string }) {
   const [copied, setCopied] = useState(false)
   const [agendaMode, setAgendaMode] = useState<'tree' | 'text' | 'image'>('tree')
   const [agendaText, setAgendaText] = useState('')
+  const [textDirty, setTextDirty] = useState(false) // agendaText holds edits (typed or OCR) not yet saved as a revision
+  const [starting, setStarting] = useState(false) // Generate clicked: flushing the transcript and enqueuing the job
   const [agendaTree, setAgendaTree] = useState<AgendaNode[] | null>(null)
   const [imageInfo, setImageInfo] = useState<string>('')
   const saveTimer = useRef<number | null>(null)
   const pendingTranscript = useRef<string | null>(null)
+  const transcriptSaves = useRef<Promise<boolean>>(Promise.resolve(true)) // saves run one at a time, in order
+  const saveSeq = useRef(0) // number of the latest queued save
+  const imageQueue = useRef<Promise<void>>(Promise.resolve()) // screenshots are read one at a time, in order
+  // Latest agenda state for callbacks that outlive a render (paste listener, OCR merges, beforeunload).
+  const agendaNow = useRef({ tree: agendaTree, dirty: textDirty, saved: m?.agenda?.tree ?? null })
+  agendaNow.current = { tree: agendaTree, dirty: textDirty, saved: m?.agenda?.tree ?? null }
 
   const refreshReview = useCallback(async () => { try { setReview(await api.get<ReviewView>(api.w(ws, `/meetings/${id}/review`))) } catch (e) { setErr(e) } }, [ws, id])
   const reloadAll = useCallback(async () => { meeting.reload(); await refreshReview() }, [meeting, refreshReview])
@@ -94,6 +104,11 @@ function MeetingWorkflow({ id }: { id: string }) {
   // Resume a running job after reload.
   useEffect(() => { api.get<Job[]>(api.w(ws, `/meetings/${id}/jobs`)).then((js) => { const active = js.find((j) => j.status === 'queued' || j.status === 'running'); if (active) setJob(active) }).catch(() => {}) }, [ws, id])
 
+  // Warn before closing the tab while a transcript edit waits for its debounced save or the agenda has unsaved edits.
+  // shortcut: an in-app navigation still saves after unmount, but an error from that save is not shown; add a
+  // global save-status indicator if that ever matters.
+  useEffect(() => { const warn = (e: BeforeUnloadEvent) => { const a = agendaNow.current; if (pendingTranscript.current !== null || a.dirty || (a.tree && JSON.stringify(a.tree) !== JSON.stringify(a.saved ?? []))) e.preventDefault() }; window.addEventListener('beforeunload', warn); return () => window.removeEventListener('beforeunload', warn) }, [])
+
   // Poll the job.
   useEffect(() => {
     if (!job || (job.status !== 'queued' && job.status !== 'running')) return
@@ -107,7 +122,7 @@ function MeetingWorkflow({ id }: { id: string }) {
       const items = Array.from(e.clipboardData?.items ?? []).filter((i) => i.type.startsWith('image/'))
       if (items.length === 0 || !m || m.agenda_approved) return
       e.preventDefault()
-      items.forEach((i) => { const f = i.getAsFile(); if (f) uploadImage(f) })
+      uploadImages(items.map((i) => i.getAsFile()).filter((f): f is File => !!f))
     }
     window.addEventListener('paste', onPaste)
     return () => window.removeEventListener('paste', onPaste)
@@ -115,18 +130,27 @@ function MeetingWorkflow({ id }: { id: string }) {
   }, [m?.id, m?.agenda_approved])
 
   const saveAgenda = async (tree: AgendaNode[] | null, text: string | null, source: string): Promise<boolean> => {
-    try { const r = await api.put<Meeting>(api.w(ws, `/meetings/${id}/agenda`), tree ? { tree, source } : { text, source }); meeting.setData(r); setAgendaTree(r.agenda!.tree); setAgendaText(r.agenda!.text); setErr(null); return true } catch (e) { setErr(e); return false }
+    try { const r = await api.put<Meeting>(api.w(ws, `/meetings/${id}/agenda`), tree ? { tree, source } : { text, source }); meeting.setData(r); setAgendaTree(r.agenda!.tree); setAgendaText(r.agenda!.text); setTextDirty(false); setErr(null); return true } catch (e) { setErr(e); return false }
   }
-  // Never approve when the edited tree was not saved: that would approve an older revision than the one on screen.
-  const approveAgenda = async () => { if (agendaTree && !(await saveAgenda(agendaTree, null, m?.agenda ? 'edit' : 'manual'))) return; try { meeting.setData(await api.post<Meeting>(api.w(ws, `/meetings/${id}/agenda/approve`))); setErr(null) } catch (e) { setErr(e) } }
+  // Never approve an older revision than the edits on screen. Unedited text is never re-sent: re-parsing it would
+  // mint new node ids and drop list numbering, so the tree (ids and text intact) is saved instead.
+  const approveAgenda = async () => { const saved = textDirty ? await saveAgenda(null, agendaText, 'text') : !agendaTree || await saveAgenda(agendaTree, null, m?.agenda ? 'edit' : 'manual'); if (!saved) return; try { meeting.setData(await api.post<Meeting>(api.w(ws, `/meetings/${id}/agenda/approve`))); setErr(null) } catch (e) { setErr(e) } }
   const uploadImage = async (f: File) => {
     setImageInfo('Extracting text from image…')
     try {
       const r = await api.upload<{ proposed_text: string | null; backend: string | null; error: string | null }>(api.w(ws, `/meetings/${id}/agenda/images`), f)
-      if (r.proposed_text) { const merged = (agendaText ? agendaText + '\n' : '') + r.proposed_text; setAgendaText(merged); setAgendaMode('text'); setImageInfo(`Text extracted with ${r.backend}. Check it, then “Use this text”.`) }
+      if (r.proposed_text) { appendAgendaText(r.proposed_text); setAgendaMode('text'); setImageInfo(`Text extracted with ${r.backend}. Check it, then “Use this text”.`) }
       else setImageInfo(r.error ?? 'No text extracted; enter the agenda manually.')
       meeting.reload()
     } catch (e) { setImageInfo(describeError(e)) }
+  }
+  const uploadImages = (files: File[]) => { imageQueue.current = imageQueue.current.then(async () => { for (const f of files) await uploadImage(f) }) }
+  // Appends to what is on screen now: the unsaved text if any, else the current (possibly edited) tree as text.
+  const appendAgendaText = (extra: string) => {
+    const { tree, dirty } = agendaNow.current
+    agendaNow.current.dirty = true // a second merge before the next render appends to this one
+    setAgendaText((prev) => { const base = dirty ? prev : toText(tree ?? []); return (base ? base + '\n' : '') + extra })
+    setTextDirty(true)
   }
   const persistTranscript = async (text: string): Promise<boolean> => {
     try {
@@ -141,8 +165,15 @@ function MeetingWorkflow({ id }: { id: string }) {
     }
   }
   const cancelTranscriptSave = () => { if (saveTimer.current) window.clearTimeout(saveTimer.current); saveTimer.current = null; pendingTranscript.current = null }
-  // Run a pending debounced save now, so processing never starts on an older version than the one on screen.
-  const flushTranscript = async (): Promise<boolean> => { const text = pendingTranscript.current; cancelTranscriptSave(); return text === null || persistTranscript(text) }
+  // Run a pending debounced save now and wait for any save already in flight, so processing never starts on an
+  // older version than the one on screen. A failed save stays pending, so the next flush (e.g. Generate) retries it,
+  // unless a newer text was queued or typed since: that newer text supersedes it.
+  const flushTranscript = (): Promise<boolean> => {
+    const text = pendingTranscript.current
+    cancelTranscriptSave()
+    if (text !== null) { const seq = ++saveSeq.current; transcriptSaves.current = transcriptSaves.current.then(async () => { const ok = await persistTranscript(text); if (!ok && seq === saveSeq.current) pendingTranscript.current ??= text; return ok }) }
+    return transcriptSaves.current
+  }
   const saveTranscript = (text: string) => {
     setTranscriptText(text)
     setSaveState('saving')
@@ -150,7 +181,13 @@ function MeetingWorkflow({ id }: { id: string }) {
     pendingTranscript.current = text
     saveTimer.current = window.setTimeout(() => { void flushTranscript() }, 1200)
   }
-  const generate = async () => { try { setErr(null); if (!(await flushTranscript())) return; setJob(await api.post<Job>(api.w(ws, `/meetings/${id}/process`))) } catch (e) { setErr(e) } }
+  const generate = async () => { setStarting(true); try { setErr(null); if (!(await flushTranscript())) { setErr((e: unknown) => e ?? new Error('Generation did not start: the transcript on screen could not be saved. Edit it or try again.')); return } setJob(await api.post<Job>(api.w(ws, `/meetings/${id}/process`))) } catch (e) { setErr(e) } finally { setStarting(false) } }
+  // Text and tree never diverge silently: Text is regenerated from the tree, and unsaved text is only dropped on request.
+  const switchAgendaMode = (k: 'tree' | 'text' | 'image') => {
+    if (k === 'tree' && textDirty) { if (!confirm('Discard your unsaved agenda text? Click “Use this text” to keep it.')) return; setTextDirty(false) }
+    if (k === 'text' && !textDirty) setAgendaText(toText(agendaTree ?? []))
+    setAgendaMode(k)
+  }
   const cancel = async () => { if (job) try { setJob(await api.post<Job>(api.w(ws, `/jobs/${job.id}/cancel`))) } catch (e) { setErr(e) } }
   const approve = async () => { try { await api.post(api.w(ws, `/meetings/${id}/approve`)); await reloadAll(); setErr(null) } catch (e) { setErr(e) } }
   const reopen = async () => { try { await api.post(api.w(ws, `/meetings/${id}/reopen`)); await reloadAll() } catch (e) { setErr(e) } }
@@ -175,7 +212,7 @@ function MeetingWorkflow({ id }: { id: string }) {
   })
 
   if (!m) return <ErrorBox error={meeting.error} />
-  const busy = !!job && (job.status === 'queued' || job.status === 'running')
+  const busy = starting || (!!job && (job.status === 'queued' || job.status === 'running'))
   const canGenerate = !!m.transcript && m.agenda_approved && !busy && m.state !== 'approved'
   const approved = m.state === 'approved'
   const step = stepIndex(m)
@@ -197,16 +234,16 @@ function MeetingWorkflow({ id }: { id: string }) {
       <Section title={`1. Agenda ${m.agenda_approved ? '(approved — revision ' + m.agenda!.revision_no + ')' : m.agenda ? '(revision ' + m.agenda.revision_no + ', not yet approved)' : ''}`}
         right={!approved && (m.agenda_approved
           ? <button className="btn" onClick={() => saveAgenda(agendaTree, null, 'edit')} disabled={busy}>Edit agenda (new revision)</button>
-          : <div className="flex gap-1">{(['tree', 'text', 'image'] as const).map((k) => <button key={k} className={`btn ${agendaMode === k ? 'btn-primary' : ''}`} onClick={() => setAgendaMode(k)}>{k === 'tree' ? 'Tree' : k === 'text' ? 'Text' : 'Screenshot'}</button>)}</div>)}>
+          : <div className="flex gap-1">{(['tree', 'text', 'image'] as const).map((k) => <button key={k} className={`btn ${agendaMode === k ? 'btn-primary' : ''}`} onClick={() => switchAgendaMode(k)}>{k === 'tree' ? 'Tree' : k === 'text' ? 'Text' : 'Screenshot'}</button>)}</div>)}>
         {m.agenda_approved || approved ? (
           <pre className="whitespace-pre-wrap text-sm">{m.agenda?.text}</pre>
         ) : (
           <>
             {agendaMode === 'image' && (
               <div>
-                <div className="muted rounded-md border border-dashed p-6 text-center text-sm" style={{ borderColor: 'var(--line)' }} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); Array.from(e.dataTransfer.files).forEach(uploadImage) }}>
+                <div className="muted rounded-md border border-dashed p-6 text-center text-sm" style={{ borderColor: 'var(--line)' }} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); uploadImages(Array.from(e.dataTransfer.files)) }}>
                   Drop PNG / JPEG / WebP screenshots here, paste with <span className="kbd">⌘V</span> / <span className="kbd">Ctrl+V</span>, or
-                  <label className="btn ml-2 cursor-pointer">choose files<input type="file" accept="image/png,image/jpeg,image/webp" multiple className="hidden" onChange={(e) => Array.from(e.target.files ?? []).forEach(uploadImage)} /></label>
+                  <label className="btn ml-2 cursor-pointer">choose files<input type="file" accept="image/png,image/jpeg,image/webp" multiple className="hidden" onChange={(e) => uploadImages(Array.from(e.target.files ?? []))} /></label>
                 </div>
                 {imageInfo && <p className="muted mt-2 text-xs">{imageInfo}</p>}
                 {m.images.length > 0 && <div className="mt-2 flex flex-wrap gap-2">{m.images.map((img) => <AuthImage key={img.id} src={api.w(ws, `/meetings/${id}/agenda/images/${img.id}`)} />)}</div>}
@@ -214,18 +251,19 @@ function MeetingWorkflow({ id }: { id: string }) {
             )}
             {agendaMode === 'text' && (
               <div>
-                <textarea className="input min-h-48 font-mono" value={agendaText} onChange={(e) => setAgendaText(e.target.value)} placeholder={'One agenda item per line; indent with spaces for sub-items.\nOrganizations\n  Relief Society\n  Elders Quorum'} aria-label="Agenda text" />
-                <div className="mt-2 flex gap-2"><button className="btn" onClick={async () => { await saveAgenda(null, agendaText, 'text'); setAgendaMode('tree') }}>Use this text</button></div>
+                <textarea className="input min-h-48 font-mono" value={agendaText} onChange={(e) => { setAgendaText(e.target.value); setTextDirty(true) }} placeholder={'One agenda item per line; indent with spaces for sub-items.\nOrganizations\n  Relief Society\n  Elders Quorum'} aria-label="Agenda text" />
+                <div className="mt-2 flex gap-2"><button className="btn" onClick={async () => { if (await saveAgenda(null, agendaText, 'text')) setAgendaMode('tree') }}>Use this text</button></div>
               </div>
             )}
             {agendaMode === 'tree' && (
               <div>
                 <AgendaEditor tree={agendaTree ?? []} onChange={setAgendaTree} />
+                <AgendaNameCheck ws={ws} meetingId={id!} tree={agendaTree ?? []} onChange={setAgendaTree} />
                 {!m.agenda && m.transcript && <button className="btn mt-2" onClick={async () => { try { setErr(null); const r = await api.post<{ tree: AgendaNode[]; meeting: Meeting }>(api.w(ws, `/meetings/${id}/agenda/propose`)); meeting.setData(r.meeting); setAgendaTree(r.tree); if (r.tree.length === 0) setErr(new Error('No substantive topics identified in the transcript; add agenda items manually.')) } catch (e) { setErr(e) } }}>Propose agenda from transcript (no agenda supplied)</button>}
               </div>
             )}
             <div className="mt-3 flex items-center gap-2">
-              <button className="btn btn-primary" onClick={approveAgenda} disabled={!(agendaTree && agendaTree.length)} data-testid="approve-agenda">Approve agenda</button>
+              <button className="btn btn-primary" onClick={approveAgenda} disabled={textDirty ? !agendaText.trim() : !(agendaTree && agendaTree.length)} data-testid="approve-agenda">Approve agenda</button>
               <span className="muted text-xs">Headings are rendered exactly as approved; notes can only be placed under them.</span>
             </div>
           </>
@@ -237,11 +275,17 @@ function MeetingWorkflow({ id }: { id: string }) {
         {approved ? <details><summary className="muted cursor-pointer text-sm">Show transcript</summary><pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap text-xs">{transcriptText}</pre></details> : (
           <>
             <textarea className="input min-h-64 font-mono text-xs" value={transcriptText} onChange={(e) => saveTranscript(e.target.value)} placeholder="Paste the transcript here (plain text). The original is preserved; later edits create a new version." aria-label="Transcript" disabled={busy} data-testid="transcript" />
-            <div className="mt-2 flex items-center gap-2 text-xs"><label className="btn cursor-pointer">Upload .txt / .md<input type="file" accept=".txt,.md,.markdown" className="hidden" onChange={async (e) => { const f = e.target.files?.[0]; if (f) { cancelTranscriptSave(); try { meeting.setData(await api.upload<Meeting>(api.w(ws, `/meetings/${id}/transcript/upload`), f)); setTranscriptText(await f.text()) } catch (x) { setErr(x) } } }} /></label>
+            <div className="mt-2 flex items-center gap-2 text-xs"><label className="btn cursor-pointer">Upload .txt / .md<input type="file" accept=".txt,.md,.markdown" className="hidden" onChange={async (e) => { const f = e.target.files?.[0]; if (f) { const typed = pendingTranscript.current; cancelTranscriptSave(); await transcriptSaves.current; const unsaved = typed ?? pendingTranscript.current; cancelTranscriptSave(); try { meeting.setData(await api.upload<Meeting>(api.w(ws, `/meetings/${id}/transcript/upload`), f)); setTranscriptText(await f.text()); transcriptSaves.current = Promise.resolve(true); setSaveState('saved') } catch (x) { pendingTranscript.current ??= unsaved; setErr(x) } } }} /></label>
               {m.transcript && m.transcript.version_no > 1 && <span className="muted">Corrections are versioned; notes whose evidence no longer matches are flagged for revalidation.</span>}</div>
           </>
         )}
       </Section>
+
+      {m.transcript && (
+        <Section title="Name suggestions from the member list">
+          <NameSuggestions ws={ws} meetingId={id} version={m.transcript.version_no} readOnly={approved || busy} onChange={refreshReview} />
+        </Section>
+      )}
 
       {!approved && (
         <Section title="3. Generate notes" right={<span className="muted text-xs">Runs locally · <span className="kbd">g</span></span>}>
@@ -263,7 +307,7 @@ function MeetingWorkflow({ id }: { id: string }) {
 
       {review && (review.notes.length > 0 || review.findings.length > 0 || approved) && (
         <Section title={approved ? 'Approved notes' : '4. Review evidence and resolve issues'} right={m.coverage && <span className="muted text-xs">{m.coverage.segments.length} segment(s) · {m.coverage.complete ? 'fully processed' : 'INCOMPLETE'}</span>}>
-          <ReviewPanel ws={ws} view={review} transcript={transcriptText} onChange={refreshReview} readOnly={approved || m.state === 'processing'} />
+          <ReviewPanel ws={ws} view={review} transcript={transcriptText} onChange={refreshReview} readOnly={approved || busy || m.state === 'processing'} />
         </Section>
       )}
 

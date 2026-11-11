@@ -25,7 +25,7 @@ Install the pre-commit hooks once: `uvx pre-commit install`.
 | What | Command |
 |---|---|
 | Backend unit + API tests (mocked model) | `cd backend && uv run pytest -q` |
-| Real local model smoke test (optional) | `AFN_REAL_MODEL=qwen3.5:27b uv run pytest tests/test_real_model.py -s` |
+| Real local model smoke test (optional) | `AFN_REAL_MODEL=qwen3.8:27b uv run pytest tests/test_real_model.py -s` |
 | Frontend unit tests | `cd frontend && npm test` |
 | Type-check UI | `npm run typecheck` |
 | End-to-end in a real browser | `npm run e2e` (starts the backend with `AFN_PROVIDER=fake`) |

@@ -1,0 +1,16 @@
+{"_comment": "SYNTHETIC – fictional meeting, invented names",
+ "workspace": "ward_council",
+ "expected": [
+  {"item": "Reimbursement guidelines", "keywords": [["reimburs", "receipt"], ["dec", "31", "thirty-first", "year end", "year-end", "end of the year"]], "follow_up": false},
+  {"item": "Activity coordination", "keywords": [["thanksgiving"], ["21", "twenty-first"]], "follow_up": false},
+  {"item": "Activity coordination", "keywords": [["abernathy", "henrike"], ["sign-up", "signup", "sign up", "sheet"]], "follow_up": true},
+  {"item": "Ward history", "keywords": [["histor", "castellanos"], ["photo", "picture"]], "follow_up": true},
+  {"item": "Missionary work", "keywords": [["baptis"], ["29", "twenty-ninth", "fairweather", "mateus"]], "follow_up": false},
+  {"item": "Missionary work", "keywords": [["meal", "dinner", "feed"], ["missionar", "calendar", "december", "gap"]], "follow_up": true},
+  {"item": "Welfare needs", "keywords": [["heat", "furnace"], ["bishop", "meet", "budget"]], "follow_up": true}
+ ],
+ "not_discussed": [],
+ "forbidden": [
+  {"keywords": [["reimburs", "receipt"], ["thanksgiving", "talent show", "sign-up"]], "why": "the reimbursement deadline belongs under Reimbursement guidelines, not filed with the activity calendar"},
+  {"keywords": [["talent show"], ["approved", "is scheduled", "will hold", "will be held", "agreed"]], "why": "a January talent show was only suggested; nobody committed to it"}
+ ]}

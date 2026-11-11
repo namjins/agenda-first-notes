@@ -37,12 +37,15 @@ C. Historical action absent from agenda and transcript → stays in the inbox on
 
 Closed id set in `workspaces.py`. One SQLite DB + directory per workspace. Every service takes a `Workspace`; every route validates the id; paths come only from the id. No cross-workspace query, search, prompt context, cache, job or export. Tests with identical content in both workspaces must keep passing.
 
+One exception (maintainer decision, 2026-11-08): the member list is shared by both workspaces, stored once in `<data>/members.sqlite3` (`workspaces.members_session`). Meeting data, name confirmations, prompts, search, history and jobs stay isolated per workspace; prompts get only that meeting's confirmed heard→name pairs.
+
 ## Privacy rules
 
 - Local inference only (`OllamaProvider` refuses non-loopback). No cloud, no fallback, no telemetry, no CDN, no automatic backups.
 - Runtime data outside the repo (`config.assert_outside_repo`). Never commit real data; fixtures carry `SYNTHETIC`.
-- Never put real agendas, transcripts, names or member data into prompts to AI assistants, tests, logs, screenshots, docs or commits.
+- Never put real agendas, transcripts, names or member data into tests, fixtures, logs, screenshots, docs, memory files or commits. Exception (maintainer decision, 2026-11-08): the maintainer may share real samples with the coding assistant in chat for development. Keep them only outside the repo (scratchpad or a folder the maintainer names), never copy them into the repo, and turn what they teach into synthetic fixtures with invented names.
 - The model has no tools; all state changes pass through validated services.
+- Member, ward and calling lists (rosters, glossaries) are used only inside the app and the local model. Never commit them, push them to GitHub, send them to web searches or any online service, or paste them into AI-assistant chats. Synthetic stand-ins only in tests.
 - Do not claim encryption at rest or church affiliation/approval.
 
 ## Architecture conventions
@@ -58,7 +61,7 @@ Closed id set in `workspaces.py`. One SQLite DB + directory per workspace. Every
 
 ```sh
 cd backend && uv sync --all-extras
-uv run pytest -q                       # 81 tests (+1 real-model, skipped), synthetic data, fake model
+uv run pytest -q                       # 240 tests (+1 real-model, skipped), synthetic data, fake model
 uv run ruff check . && uv run ruff format --check . && uv run mypy
 uv run agenda-first-notes serve|paths|migrate|audit [--staged]
 AFN_REAL_MODEL=<model> uv run pytest tests/test_real_model.py -s   # optional, needs local Ollama
@@ -67,7 +70,7 @@ cd frontend && npm ci
 npm run typecheck && npm test && npm run build
 npm run e2e                            # Playwright; starts backend with AFN_PROVIDER=fake
 
-python run.py                          # user launcher
+python3 run.py                         # user launcher
 ```
 
 ## Repository safety

@@ -1,0 +1,6 @@
+;; macOS sandbox-exec profile: everything allowed except outbound network, which may only reach loopback
+;; ("localhost" in SBPL means 127.0.0.1 and ::1). Use: sandbox-exec -f loopback-only.sb <command>
+(version 1)
+(allow default)
+(deny network-outbound)
+(allow network-outbound (remote ip "localhost:*"))

@@ -27,6 +27,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Data directory: {d}")
         for wid in ("ward_council", "bishopric"):
             print(f"  {wid}: {d / 'workspaces' / wid}")
+        print(f"Member list (both workspaces): {d / 'members.sqlite3'}")
         print(f"Settings: {config.settings_path()}")
         return 0
     if args.cmd == "migrate":

@@ -1,0 +1,17 @@
+{"_comment": "SYNTHETIC – fictional meeting, invented names",
+ "workspace": "ward_council",
+ "expected": [
+  {"item": "Brother Augustin Pemberton-Ruiz - Elders Quorum > Updates", "keywords": [["leaves", "leaf", "yard"], ["brightwater", "nakamura", "saturday"]], "follow_up": true},
+  {"item": "Ministering", "keywords": [["ministering", "companionship"], ["list", "assignment", "reorganiz", "next month"]], "follow_up": true},
+  {"item": "Funeral luncheon", "keywords": [["luncheon", "lunch"], ["saturday", "14", "fourteenth", "cultural hall", "one o'clock", "1:00", "1 pm"]], "follow_up": false},
+  {"item": "Funeral luncheon", "keywords": [["oyelaran", "wilhelmina"], ["salad", "dessert", "sign-up", "signup", "sign up"]], "follow_up": true},
+  {"item": "Youth camp funding", "keywords": [["camp"], ["1,200", "1200", "twelve hundred"]], "follow_up": false},
+  {"item": "Welfare move", "keywords": [["mov"], ["pemberton", "elders", "21", "twenty-first"]], "follow_up": true},
+  {"item": "Stake devotional", "keywords": [["devotional"], ["22", "twenty-second"]], "follow_up": false},
+  {"item": "Building and facilities", "keywords": [["door", "lock"], ["kowalczyk", "facilit", "fm group", "fm "]], "follow_up": true}
+ ],
+ "not_discussed": ["Sister Wilhelmina Oyelaran - Relief Society > Updates", "Brother Thaddeus Kowalczyk-Brandt - Young Men > Updates", "Sister Ottilie Marchetti-Vance - Young Women", "Nothing", "Sister Beatrix Hallorann - Primary", "Sister Beatrix Hallorann - Primary > Updates", "Temple and family history"],
+ "forbidden": [
+  {"keywords": [["pancake", "fundraiser"], ["approved", "will hold", "will be held", "agreed"]], "why": "the pancake breakfast fundraiser was only suggested; whether fundraisers are allowed is an open question"},
+  {"keywords": [["fontaine", "funeral", "luncheon"], ["devotional", "camp"]], "why": "funeral luncheon facts must not be merged into other items"}
+ ]}

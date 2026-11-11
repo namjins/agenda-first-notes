@@ -1,0 +1,17 @@
+{"_comment": "SYNTHETIC – fictional meeting, invented names",
+ "workspace": "ward_council",
+ "expected": [
+  {"item": "Sister Ottilie Marchbanks - Relief Society > Updates", "keywords": [["grunewald", "grunwald", "osei"], ["visit", "welcome"]], "follow_up": true},
+  {"item": "Sister Ottilie Marchbanks - Relief Society > Updates", "keywords": [["delacroix", "mbatha"], ["mov"]], "follow_up": false},
+  {"item": "Welfare", "keywords": [["szabo", "whitfield"], ["food"]], "follow_up": true},
+  {"item": "Ministering interviews", "keywords": [["interview"], ["march", "quarter"]], "follow_up": true},
+  {"item": "Ministering", "keywords": [["companionship", "assignment"], ["sunday"]], "follow_up": true},
+  {"item": "Temple and family history", "keywords": [["19", "nineteenth"], ["7", "seven"]], "follow_up": false},
+  {"item": "Missionary work", "keywords": [["hallvardsen", "halvorsen", "hallvorsen"], ["22", "twenty-second", "twenty second", "farewell"]], "follow_up": false}
+ ],
+ "not_discussed": ["Sister Rosalind Kettleborough - Young Women", "Sister Rosalind Kettleborough - Young Women > Updates"],
+ "forbidden": [
+  {"keywords": [["kowalski", "ferreira"], ["assigned", "will minister", "[owner"]], "why": "Brother Kowalski-Ferreira was only floated as a possible minister; nothing was decided"},
+  {"keywords": [["abbington", "mwale"], ["class"], ["scheduled", "will teach", "will begin"]], "why": "the family history class was only an idea, pending Sunday school"}
+ ],
+ "names": [{"heard": "jen tolliver", "member": "Toliver, Jennifer Rose"}]}

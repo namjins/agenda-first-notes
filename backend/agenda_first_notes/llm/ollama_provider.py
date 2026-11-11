@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 from urllib.parse import urlparse
 
@@ -22,9 +23,10 @@ def assert_local_host(host: str) -> str:
 class OllamaProvider:
     def __init__(self, host: str) -> None:
         self.host = assert_local_host(host)
+        # timeout=1800: a dense 27-31B model at ~20 tok/s needs ~10 min for a full 12k-token reply.
         # trust_env=False: ignore HTTP(S)_PROXY / OS proxy settings, which httpx would otherwise apply even to
         # loopback URLs; follow_redirects=False: never let a 3xx send the transcript somewhere else.
-        self._client = ollama.Client(host=self.host, timeout=600, trust_env=False, follow_redirects=False)
+        self._client = ollama.Client(host=self.host, timeout=1800, trust_env=False, follow_redirects=False)
 
     def health(self) -> dict[str, Any]:
         try:
@@ -56,21 +58,27 @@ class OllamaProvider:
         return out
 
     def generate(self, req: GenerateRequest) -> str:
-        msg: dict[str, Any] = {"role": "user", "content": req.prompt}
+        prompt, fmt = req.prompt, req.json_schema
+        if req.think and fmt is not None:
+            # Ollama 0.33 + qwen3.6: a format grammar together with thinking garbles the JSON ('{"answer": "}"').
+            # Ask for the schema in words instead; the caller validates the reply strictly either way.
+            prompt += "\n\nReply with only a JSON object matching this JSON Schema:\n" + json.dumps(fmt)
+            fmt = None
+        msg: dict[str, Any] = {"role": "user", "content": prompt}
         if req.images:
             msg["images"] = req.images
         kwargs: dict[str, Any] = {
             "model": req.model,
             "messages": [{"role": "system", "content": req.system}, msg],
-            "format": req.json_schema,
+            "format": fmt,
             "options": {"temperature": req.temperature, "num_ctx": req.num_ctx, "num_predict": req.max_tokens},
             "stream": False,
         }
         try:
-            # Reasoning models otherwise spend the whole output budget on hidden thinking and return "".
-            # Some models reject or misbehave with think=False, so fall back to the plain call.
+            # Thinking is off unless the request asks for it: reasoning models otherwise spend the whole output
+            # budget on hidden thinking and return "". Some models reject the flag, so fall back to the plain call.
             try:
-                resp = self._client.chat(**kwargs, think=False)
+                resp = self._client.chat(**kwargs, think=req.think)
             except ollama.ResponseError as e:
                 if "think" not in str(e).lower():
                     raise

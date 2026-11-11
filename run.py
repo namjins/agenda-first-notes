@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """One-command launcher (cross-platform, pure Python).
 
-    python run.py            # build the frontend once if needed, then start the local app
-    python run.py --port 9000
+    python3 run.py           # build the frontend once if needed, then start the local app
+    python3 run.py --port 9000
 
 Requires: Python 3.12+, uv (https://docs.astral.sh/uv/), Node.js 20+ (only for the first build),
 and a locally running Ollama with at least one model.

@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import hashlib
+import logging
+from collections import Counter
 from collections.abc import Callable
 from datetime import date
 from typing import Any
 
 from sqlalchemy import delete, null, or_, select, update
 from sqlalchemy import text as sql
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from . import config, evidence, pipeline, render
+from . import config, evidence, names, pipeline, render
 from .agenda import AgendaNode, from_dicts, node_ids, parse_text, to_dicts, validate_tree, walk
 from .llm import get_provider
 from .llm.base import ModelProvider, ProviderError
@@ -25,6 +28,8 @@ from .models import (
     FollowUpEvent,
     Job,
     Meeting,
+    Member,
+    NameConfirmation,
     Note,
     NotesRevision,
     ReviewFinding,
@@ -32,9 +37,11 @@ from .models import (
     TranscriptVersion,
 )
 from .segmentation import Segment, coverage_complete, segment
-from .workspaces import Workspace, engine_for, session_for
+from .workspaces import WORKSPACES, Workspace, checkpoint, get_workspace, members_engine, members_session, session_for
 
 UNSET = "__unset__"  # sentinel: "field not supplied" (None means "clear it")
+WAL_BUSY = "Deleted data may stay in the database's write-ahead file until the app is restarted (it was in use)."
+log = logging.getLogger(__name__)
 
 
 class ServiceError(ValueError):
@@ -184,8 +191,8 @@ def delete_meeting(ws: Workspace, meeting_id: str) -> None:
         audit(s, "meeting", meeting_id, "deleted", prev={"history_rows": removed}, source="user")  # ids only
         s.delete(m)
         s.commit()
-    with engine_for(ws).connect() as conn:  # secure_delete zeroes freed pages; move them out of the WAL too
-        conn.exec_driver_sql("PRAGMA wal_checkpoint(TRUNCATE)")
+    if not checkpoint(ws):
+        log.warning(WAL_BUSY)  # no content: the message names no meeting data
     for f in ws.uploads.glob(f"{meeting_id}_*"):
         f.unlink(missing_ok=True)
 
@@ -209,6 +216,7 @@ def set_agenda(
     source: str,
 ) -> AgendaRevision:
     """Create a new (unapproved) agenda revision. Approved revisions are immutable."""
+    parsed = tree is None
     if tree is None:
         tree = parse_text(text or "")
     validate_tree(tree)
@@ -218,6 +226,9 @@ def set_agenda(
             raise ServiceError("Approved meeting; reopen it before changing the agenda.")
         _not_processing(m)
         prev = current_agenda(s, meeting_id)
+        if parsed and prev is not None:
+            approved = current_agenda(s, meeting_id, approved_only=True)
+            _reuse_node_ids(tree, [from_dicts(r.tree) for r in (approved, prev) if r is not None])
         rev = AgendaRevision(
             meeting_id=meeting_id,
             revision_no=(prev.revision_no + 1 if prev else 1),
@@ -228,6 +239,91 @@ def set_agenda(
         transition(m, "agenda_imported")
         s.commit()
         return rev
+
+
+def _fold(text: str) -> str:
+    return " ".join(text.split()).casefold()
+
+
+def _headings(s: Session, meeting_id: str) -> dict[str, str]:
+    """Node id -> folded heading over every agenda revision, so ids of renamed or re-imported nodes still resolve."""
+    return {
+        x.id: _fold(x.text)
+        for r in s.scalars(select(AgendaRevision).where(AgendaRevision.meeting_id == meeting_id))
+        for x, _ in walk(from_dicts(r.tree))
+    }
+
+
+def _pair_claims(
+    claims: list[list[tuple[str | None, str]]], notes: list[dict[str, Any]], heading: dict[str, str]
+) -> dict[int, int]:
+    """One-to-one claim matching, claim index -> note index. Each claim, known as (agenda node, text) pairs, takes at
+    most one note making the same claim, and each note is taken once. Pass 1 looks on the same node, pass 2 under the
+    same heading text (renamed or re-imported nodes), pass 3 anywhere (the model filed it under another item)."""
+
+    def same_place(p: int, stored: str | None, text: str, note: dict[str, Any]) -> bool:
+        node = note["agenda_node_id"]
+        if p == 0:
+            return stored == node
+        if render.is_marker({"text": text}) or render.is_marker(note):
+            return False  # "discussed" markers share one text: only the same item's marker is the same claim
+        return p == 2 or (stored in heading and heading[stored] == heading.get(node or ""))
+
+    out: dict[int, int] = {}
+    for p in range(3):
+        for i, pairs in enumerate(claims):
+            for j, n in enumerate(notes):
+                if i in out or j in out.values():
+                    continue
+                if any(same_place(p, node, t, n) and evidence.same_claim(n["text"], t) for node, t in pairs):
+                    out[i] = j
+    return out
+
+
+def _reuse_node_ids(new: list[AgendaNode], sources: list[list[AgendaNode]]) -> None:
+    """Text re-imports keep the ids of unchanged headings, so notes stay mapped; only new or renamed ones get new ids.
+
+    Sources in priority order (approved revision, then the latest draft). Match by heading path (text under the same
+    parent chain); else by the same text at the same depth when it is unique there in both the old and the new tree.
+    """
+
+    def paths(nodes: list[AgendaNode], parent: tuple[str, ...] = ()) -> list[tuple[tuple[str, ...], AgendaNode]]:
+        out: list[tuple[tuple[str, ...], AgendaNode]] = []
+        for n in nodes:
+            path = (*parent, _fold(n.text))
+            out += [(path, n), *paths(n.children, path)]
+        return out
+
+    def level(path: tuple[str, ...]) -> tuple[int, str]:
+        return len(path), path[-1]
+
+    new_paths = paths(new)
+    new_levels = Counter(level(p) for p, _ in new_paths)
+    taken: set[str] = set()
+    kept: set[int] = set()
+    for old in sources:
+        by_path: dict[tuple[str, ...], list[str]] = {}
+        by_level: dict[tuple[int, str], list[str]] = {}
+        for path, n in paths(old):
+            by_path.setdefault(path, []).append(n.id)
+            by_level.setdefault(level(path), []).append(n.id)
+        for exact in (True, False):  # exact paths first, so a fallback never takes an id an exact match needs
+            for path, n in new_paths:
+                if id(n) in kept:
+                    continue
+                if exact:
+                    free = [i for i in by_path.get(path, []) if i not in taken][:1]
+                else:
+                    # shortcut: a removed group's uniquely named child ("Relief Society / Updates") can hand its id to
+                    # a new group's child of the same name ("Primary / Updates"); accepted so renamed parents keep their
+                    # children mapped. Upgrade to parent-aware matching if users re-file whole groups this way.
+                    ids = by_level.get(level(path), [])
+                    free = ids if len(ids) == 1 and new_levels[level(path)] == 1 and ids[0] not in taken else []
+                if free:
+                    n.id = free[0]
+                    taken.add(n.id)
+                    kept.add(id(n))
+    validate_tree(new)
 
 
 def _mark_notes_stale_for_removed_nodes(s: Session, meeting_id: str, valid_ids: set[str]) -> None:
@@ -306,6 +402,7 @@ def set_transcript(
                 if len(n.evidence) < before or not n.evidence:
                     n.stale = True
                     n.status = "needs_review"
+            _rederive(s, meeting_id, text)
             m.coverage = None
         if m.state in (
             "ready_for_approval",
@@ -317,7 +414,28 @@ def set_transcript(
         elif m.state in ("draft", "agenda_imported"):
             transition(m, "transcript_added")
         s.commit()
-        return tv
+    if prev is not None:
+        revalidate_notes(ws, meeting_id)  # e.g. a confirmed name whose heard text is gone now blocks approval
+    return tv
+
+
+def _rederive(s: Session, meeting_id: str, text: str) -> None:
+    """Re-derive status and confirmed-name provenance of the notes still making the model's claim, against the
+    current transcript and confirmed names: a removed confirmation or an edited transcript never leaves a note
+    'verified' on a name only the confirmation licensed. Stale notes keep 'needs_review'. Notes carrying the user's own
+    claim keep their status; only their "name confirmed by you" label is recomputed."""
+    confirmed = _confirmed(s, meeting_id)
+    for n in s.scalars(select(Note).where(Note.meeting_id == meeting_id)):
+        d: dict[str, Any] = {
+            "text": n.text,
+            "category": n.category,
+            "uncertainty": n.uncertainty,
+            "evidence": n.evidence,
+        }
+        status = pipeline.derive_status(d, text, confirmed)
+        n.name_confirmed = d["name_confirmed"]
+        if not n.stale and not n.user_content:
+            n.status = "user_edited" if n.origin == "user" and status == "verified" else status
 
 
 # ---------------------------------------------------------------- processing
@@ -341,7 +459,9 @@ def _notes_as_dicts(notes: list[Note]) -> list[dict[str, Any]]:
             "stale": n.stale,
             "deleted": n.deleted,
             "source_text": n.source_text,
+            "source_node_id": n.source_node_id,
             "user_content": n.user_content,
+            "name_confirmed": n.name_confirmed,
         }
         for n in notes
     ]
@@ -372,14 +492,9 @@ def process_meeting(
         if rev is None or rev.id != (current_agenda(s, meeting_id) or rev).id:
             raise ServiceError("Approve the agenda before generating notes.")
         tree = from_dicts(rev.tree)
+        confirmed = _confirmed(s, meeting_id)
         transition(m, "processing")
         m.last_error = None
-        # Replace previous model-origin notes; user notes survive and are re-checked against the agenda.
-        for n in s.scalars(select(Note).where(Note.meeting_id == meeting_id)):
-            if n.origin == "model":
-                s.delete(n)
-        for f in s.scalars(select(ReviewFinding).where(ReviewFinding.meeting_id == meeting_id)):
-            s.delete(f)
         segs = segment(tv.text, settings.segment_chars, settings.segment_overlap_chars)
         m.coverage = {
             "segments": [x.model_dump() for x in segs],
@@ -401,7 +516,9 @@ def process_meeting(
                 f"Extracting segment {seg.index + 1} of {len(segs)}",
             )
             try:
-                notes, findings = pipeline.extract_segment(provider, settings, wid, tree, text, seg, len(segs), tv_id)
+                notes, findings = pipeline.extract_segment(
+                    provider, settings, wid, tree, text, seg, len(segs), tv_id, confirmed
+                )
                 seg.status = "done"
                 all_notes.extend(notes)
                 all_findings.extend(findings)
@@ -419,23 +536,30 @@ def process_meeting(
                     }
                 )
             _save_coverage(ws, meeting_id, segs)
-        notes = pipeline.dedupe(all_notes)
+        if not any(x.status == "done" for x in segs):
+            first = next((x.error for x in segs if x.error), "")
+            raise ServiceError(f"No part of the transcript could be processed; previous notes kept. {first}")
+        notes = pipeline.dedupe(all_notes, text, confirmed)
         with session_for(ws) as s:
-            # Any user-touched note (edited, untagged, moved or deleted) wins over a fresh model note making the
-            # same claim (its current or its original model text) anywhere in the meeting; otherwise regeneration
-            # would resurrect a moved/edited note or duplicate it.
-            suppressed = [
-                t
+            # Each user-touched note (edited, untagged, moved or deleted) wins over ONE fresh model note making the
+            # same claim (its current text, or its original model text): on the same item first, then under the same
+            # heading, then anywhere. The same wording elsewhere stays when no user note is left to claim it.
+            claims = [
+                [(node, t) for node, t in ((x.agenda_node_id, x.text), (x.source_node_id, x.source_text)) if t]
                 for x in s.scalars(select(Note).where(Note.meeting_id == meeting_id, Note.origin == "user"))
-                for t in (x.text, x.source_text)
-                if t
             ]
-        notes = [n for n in notes if not any(evidence.same_claim(n["text"], t) for t in suppressed)]
+            heading = _headings(s, meeting_id)
+        suppressed = set(_pair_claims(claims, notes, heading).values())
+        notes = [n for j, n in enumerate(notes) if j not in suppressed]
         for i, nd in enumerate(notes):
             nd["position"] = i
         with session_for(ws) as s:
             m = get_meeting(s, meeting_id)
-            user_notes = list(s.scalars(select(Note).where(Note.meeting_id == meeting_id)))
+            # Swap only now: a cancelled or failed extraction leaves the previous notes and findings in place.
+            for old in s.scalars(select(Note).where(Note.meeting_id == meeting_id, Note.origin == "model")):
+                s.delete(old)
+            s.execute(delete(ReviewFinding).where(ReviewFinding.meeting_id == meeting_id))
+            user_notes = list(s.scalars(select(Note).where(Note.meeting_id == meeting_id, Note.origin == "user")))
             for nd in notes:
                 row = Note(**{k: v for k, v in nd.items() if not k.startswith("_")}, meeting_id=meeting_id)
                 s.add(row)
@@ -467,7 +591,17 @@ def process_meeting(
             tv_id=tv_id,
             report=report,
             cancel=cancel,
+            confirmed=confirmed,
         )
+        with session_for(ws) as s:
+            # A confirmation removed after this run read them (before the job switched to processing) must not
+            # license its notes: re-check them against the current ones.
+            changed = _confirmed(s, meeting_id) != confirmed
+            if changed:
+                _rederive(s, meeting_id, text)
+                s.commit()
+        if changed:
+            converged = converged and not any(d["severity"] == "high" for d in revalidate_notes(ws, meeting_id))
         with session_for(ws) as s:
             m = get_meeting(s, meeting_id)
             complete = coverage_complete(segs)
@@ -475,6 +609,7 @@ def process_meeting(
                 **(m.coverage or {}),
                 "segments": [x.model_dump() for x in segs],
                 "complete": complete,
+                "confirmed_names": [[h, f] for h, f, _ in confirmed],  # what these notes were generated with
             }
             transition(m, "ready_for_approval" if converged and complete else "review_required")
             s.commit()
@@ -526,16 +661,21 @@ def run_review(
     tv_id: str,
     report: Callable[[float, str], None],
     cancel: Callable[[], bool],
+    confirmed: pipeline.Confirmed = (),
 ) -> bool:
     """Adversarial review loop. Returns True when technically converged."""
     rounds = settings.max_review_rounds
     material_left = 0
+    with session_for(ws) as s:
+        headings = _headings(s, meeting_id)
     for r in range(1, rounds + 1):
         if cancel():
             raise Cancelled()
         report(0.75 + 0.2 * (r - 1) / max(rounds, 1), f"Adversarial review round {r} of {rounds}")
         try:
-            notes, findings, material = pipeline.review_round(provider, settings, ws.id, tree, notes, text, tv_id, r)
+            notes, findings, material = pipeline.review_round(
+                provider, settings, ws.id, tree, notes, text, tv_id, r, headings=headings, confirmed=confirmed
+            )
         except (pipeline.PipelineError, ProviderError) as e:
             findings, material = (
                 [
@@ -551,13 +691,13 @@ def run_review(
                 ],
                 1,
             )
-        det = pipeline.deterministic_checks(_checked(notes), tree)
+        det = pipeline.deterministic_checks(_checked(notes), tree, text, confirmed)
         _persist_review(ws, meeting_id, notes, findings, det, r)
         material_left = material + sum(1 for d in det if d["severity"] == "high")
         if material_left == 0:
             return True
     if rounds == 0:
-        det = pipeline.deterministic_checks(_checked(notes), tree)
+        det = pipeline.deterministic_checks(_checked(notes), tree, text, confirmed)
         _persist_review(ws, meeting_id, notes, [], det, 0)
         return not any(d["severity"] == "high" for d in det)
     return False
@@ -592,6 +732,7 @@ def _persist_review(
                     "deleted",
                     "evidence",
                     "position",
+                    "name_confirmed",
                 ):
                     setattr(row, k, n[k])
             else:
@@ -611,7 +752,8 @@ def revalidate_notes(ws: Workspace, meeting_id: str) -> list[dict[str, Any]]:
         rev = current_agenda(s, meeting_id, approved_only=True)
         tree = from_dicts(rev.tree) if rev else []
         notes = _notes_as_dicts(list(s.scalars(select(Note).where(Note.meeting_id == meeting_id))))
-        det = pipeline.deterministic_checks(_checked(notes), tree)
+        tv = latest_transcript(s, meeting_id)
+        det = pipeline.deterministic_checks(_checked(notes), tree, tv.text if tv else "", _confirmed(s, meeting_id))
         dismissed = set()
         for f in s.scalars(select(ReviewFinding).where(ReviewFinding.meeting_id == meeting_id)):
             if f.resolved:
@@ -651,7 +793,8 @@ def edit_note(ws: Workspace, meeting_id: str, note_id: str | None, data: dict[st
                 "agenda_node_id": n.agenda_node_id,
             }
             if n.origin == "model" and n.source_text is None:
-                n.source_text = n.text  # lets regeneration recognise this claim after the user moves or rewords it
+                # Lets regeneration recognise this claim where the model put it after the user moves or rewords it.
+                n.source_text, n.source_node_id = n.text, n.agenda_node_id
         else:
             n = Note(meeting_id=meeting_id, position=10_000, evidence=[])
             s.add(n)
@@ -709,9 +852,24 @@ def edit_note(ws: Workspace, meeting_id: str, note_id: str | None, data: dict[st
 
 def resolve_finding(ws: Workspace, meeting_id: str, finding_id: str, resolved: bool = True) -> None:
     with session_for(ws) as s:
+        m = get_meeting(s, meeting_id)
+        if m.state == "approved":
+            raise ServiceError("Approved meeting; reopen it before changing findings.")
+        _not_processing(m)
         f = s.get(ReviewFinding, finding_id)
         if f is None or f.meeting_id != meeting_id:
             raise NotFound("finding not found")
+        if f.resolved != resolved:
+            audit(
+                s,
+                "review_finding",
+                f.id,
+                "dismissed" if resolved else "reopened",
+                prev={"resolved": f.resolved, "category": f.category, "note_id": f.note_id},
+                new={"resolved": resolved},
+                source="user",
+                meeting_id=meeting_id,
+            )
         f.resolved = resolved
         s.commit()
 
@@ -739,6 +897,7 @@ def _render(s: Session, ws: Workspace, m: Meeting, *, include_unverified: bool) 
         still = {c["follow_up_id"]: c["description"] for c in _undiscussed(s, m)}
         extra = list(dict.fromkeys(still[x] for x in m.carry_forward if x in still))
     complete = bool((m.coverage or {}).get("complete"))
+    tv = latest_transcript(s, m.id)
     return render.render(
         title=f"{ws.name} Meeting Notes",
         meeting_date=m.meeting_date,
@@ -746,6 +905,7 @@ def _render(s: Session, ws: Workspace, m: Meeting, *, include_unverified: bool) 
         notes=notes,
         coverage_complete=complete,
         extra_follow_ups=extra,
+        transcript_version_id=tv.id if tv else None,
     )
 
 
@@ -823,44 +983,104 @@ def _propose_history(s: Session, m: Meeting, rev: NotesRevision) -> None:
     """Historical reconciliation. Everything created here is marked by origin and backed by evidence.
 
     Transcript-backed follow-ups start as 'proposed' and decisions keep their proposed/confirmed category;
-    the user confirms or edits them in the inbox. Existing records are never rewritten; the one exception is a
-    still-'proposed' follow-up whose note is gone from this revision, which becomes 'unverified' with an event.
+    the user confirms or edits them in the inbox. Existing records are never rewritten, with one exception: the
+    latest approved revision holds the facts, so a row whose note is gone from it becomes 'unverified' (a follow-up
+    only while still 'proposed'; other rows only if the user never changed them), and returns to its previous status
+    when the note comes back. Each such change writes an audit event (and a FollowUpEvent for follow-ups).
     """
     agenda = current_agenda(s, m.id, approved_only=True)
     texts = {n.id: n.text for n, _ in walk(from_dicts(agenda.tree))} if agenda else {}
-    # Claim texts of every note any approved revision held: a row proposed from an earlier note (since regenerated
-    # under a new id) is recognised by its claim, not only by note id.
-    prior: dict[str, list[str]] = {}
+    # (agenda node, claim text) of every note any approved revision held: a row proposed from an earlier note (since
+    # regenerated under a new id) is recognised by its claim, not only by note id.
+    prior: dict[str, list[tuple[str | None, str]]] = {}
     for r in s.scalars(select(NotesRevision).where(NotesRevision.meeting_id == m.id)):
         for x in r.notes_snapshot:
-            prior.setdefault(x["id"], []).extend(t for t in (x.get("text"), x.get("source_text")) if t)
+            pairs = ((x.get("agenda_node_id"), x.get("text")), (x.get("source_node_id"), x.get("source_text")))
+            prior.setdefault(x["id"], []).extend((node, t) for node, t in pairs if t)
     tables: tuple[Any, ...] = (FollowUp, Decision, CallingEvent, ScheduledEvent)
     rows: dict[Any, list[Any]] = {
         t: list(s.scalars(select(t).where(t.meeting_id == m.id, t.source_note_id.is_not(None)))) for t in tables
     }
 
-    def match(table: Any, n: dict[str, Any]) -> Any:
-        for row in rows[table]:
-            if row.source_note_id == n["id"] or any(
-                evidence.same_claim(n["text"], t) for t in prior.get(row.source_note_id, [])
-            ):
-                return row
+    rendered = [
+        n
+        for n in rev.notes_snapshot
+        if not n["deleted"] and n["status"] != "unsupported" and n["agenda_node_id"] in texts
+    ]  # only notes the approved Markdown actually renders
+    rendered_ids = {n["id"] for n in rendered}
+    heading = _headings(s, m.id)
+    wants: dict[Any, Callable[[dict[str, Any]], bool]] = {
+        FollowUp: lambda n: bool(n["follow_up"]),
+        Decision: lambda n: n["category"] in ("decision", "proposed_decision"),
+        CallingEvent: lambda n: n["category"] == "calling_event" and bool(n["calling_event"]),
+        ScheduledEvent: lambda n: n["category"] == "date",
+    }
+
+    def set_status(row: Any, new: str | None, action: str, note: str) -> None:
+        prev, row.status = row.status, new
+        if isinstance(row, FollowUp):
+            s.add(
+                FollowUpEvent(
+                    follow_up_id=row.id, meeting_id=m.id, prev_status=prev, new_status=new, source="system", note=note
+                )
+            )
+        audit(
+            s,
+            row.__tablename__[:-1],
+            row.id,
+            action,
+            prev={"status": prev},
+            new={"status": new, "revision_no": rev.revision_no},
+            source="system",
+            meeting_id=m.id,
+        )
+
+    def system_downgrade(row: Any) -> AuditEvent | None:
+        """The system's latest downgrade of this row, unless the user has set its status since."""
+        q = select(AuditEvent).where(AuditEvent.entity_id == row.id).order_by(AuditEvent.created_at.desc())
+        for a in s.scalars(q):
+            if (a.source, a.action) == ("system", "not_in_approved_notes"):
+                return a
+            new, prev = a.new or {}, a.prev or {}
+            if a.source == "user" and "status" in new and new["status"] != prev.get("status"):
+                return None  # an explicit status choice blocks the restore; a note or date edit does not
         return None
 
-    def add(table: Any, row: Any) -> None:
+    # Each row backs at most one note: its own note when still rendered, else one note making the same claim (same
+    # node, then same heading, then anywhere), which then takes the row over.
+    backing: dict[Any, dict[str, Any]] = {}
+    for table in tables:
+        notes = [n for n in rendered if wants[table](n)]
+        own = {n["id"] for n in notes}
+        by_note = {r.source_note_id: r for r in rows[table] if r.source_note_id in own}
+        free = [r for r in rows[table] if r.source_note_id not in rendered_ids]
+        rest = [n for n in notes if n["id"] not in by_note]
+        for i, j in _pair_claims([prior.get(r.source_note_id, []) for r in free], rest, heading).items():
+            by_note[rest[j]["id"]] = free[i]
+        for note_id, row in by_note.items():
+            row.source_note_id = note_id  # taken over by claim: later edits of this note still match by id
+            downgrade = system_downgrade(row)
+            if row.status == "unverified" and downgrade is not None:
+                set_status(
+                    row,
+                    (downgrade.prev or {}).get("status"),
+                    "back_in_approved_notes",
+                    f"Back in approved notes revision {rev.revision_no}",
+                )
+        backing[table] = by_note
+
+    def add(row: Any) -> None:
         s.add(row)
         s.flush()
-        rows[table].append(row)
 
-    backed: set[str] = set()
-    for n in rev.notes_snapshot:
-        if n["deleted"] or n["status"] == "unsupported" or n["agenda_node_id"] not in texts:
-            continue  # only notes the approved Markdown actually renders
+    for n in rendered:
         topic = texts[n["agenda_node_id"]]
         # Moving or retagging keeps the transcript's claim; only a content edit makes it the user's.
-        origin = "transcript" if n["evidence"] and not n.get("user_content") else "user"
+        # A name the user confirmed makes the claim the user's too (never transcript-verified); stored on the note.
+        by_user = n.get("user_content") or n.get("name_confirmed")
+        origin = "transcript" if n["evidence"] and not by_user else "user"
         if n["follow_up"]:
-            fu = match(FollowUp, n)
+            fu = backing[FollowUp].get(n["id"])
             if fu is None:
                 fu = FollowUp(
                     source_note_id=n["id"],
@@ -872,7 +1092,7 @@ def _propose_history(s: Session, m: Meeting, rev: NotesRevision) -> None:
                     origin=origin,
                     evidence=n["evidence"],
                 )
-                add(FollowUp, fu)
+                add(fu)
                 s.add(
                     FollowUpEvent(
                         follow_up_id=fu.id,
@@ -893,8 +1113,7 @@ def _propose_history(s: Session, m: Meeting, rev: NotesRevision) -> None:
                     source=origin,
                     meeting_id=m.id,
                 )
-            backed.add(fu.id)
-        if n["category"] in ("decision", "proposed_decision") and match(Decision, n) is None:
+        if wants[Decision](n) and n["id"] not in backing[Decision]:
             trusted = origin == "transcript" and n["status"] in ("verified", "user_edited") and not n["stale"]
             status = (
                 "confirmed" if n["category"] == "decision" and n["uncertainty"] == "low" and trusted else "proposed"
@@ -910,7 +1129,7 @@ def _propose_history(s: Session, m: Meeting, rev: NotesRevision) -> None:
                 origin=origin,
                 evidence=n["evidence"],
             )
-            add(Decision, d)
+            add(d)
             audit(
                 s,
                 "decision",
@@ -920,7 +1139,7 @@ def _propose_history(s: Session, m: Meeting, rev: NotesRevision) -> None:
                 source=origin,
                 meeting_id=m.id,
             )
-        if n["category"] == "calling_event" and n["calling_event"] and match(CallingEvent, n) is None:
+        if wants[CallingEvent](n) and n["id"] not in backing[CallingEvent]:
             ce = CallingEvent(
                 source_note_id=n["id"],
                 meeting_id=m.id,
@@ -931,7 +1150,7 @@ def _propose_history(s: Session, m: Meeting, rev: NotesRevision) -> None:
                 origin=origin,
                 evidence=n["evidence"],
             )
-            add(CallingEvent, ce)
+            add(ce)
             audit(
                 s,
                 "calling_event",
@@ -941,7 +1160,7 @@ def _propose_history(s: Session, m: Meeting, rev: NotesRevision) -> None:
                 source=origin,
                 meeting_id=m.id,
             )
-        if n["category"] == "date" and match(ScheduledEvent, n) is None:
+        if wants[ScheduledEvent](n) and n["id"] not in backing[ScheduledEvent]:
             se = ScheduledEvent(
                 source_note_id=n["id"],
                 meeting_id=m.id,
@@ -950,7 +1169,7 @@ def _propose_history(s: Session, m: Meeting, rev: NotesRevision) -> None:
                 origin=origin,
                 evidence=n["evidence"],
             )
-            add(ScheduledEvent, se)
+            add(se)
             audit(
                 s,
                 "scheduled_event",
@@ -960,30 +1179,23 @@ def _propose_history(s: Session, m: Meeting, rev: NotesRevision) -> None:
                 source=origin,
                 meeting_id=m.id,
             )
-    for fu in rows[FollowUp]:
-        if fu.id not in backed and fu.status == "proposed":
-            fu.status = "unverified"
-            note = f"No longer a follow-up in approved notes revision {rev.revision_no}"
-            s.add(
-                FollowUpEvent(
-                    follow_up_id=fu.id,
-                    meeting_id=m.id,
-                    prev_status="proposed",
-                    new_status="unverified",
-                    source="system",
-                    note=note,
+    for table in tables:
+        for row in rows[table]:
+            if row in backing[table].values() or row.status == "unverified":
+                continue
+            if row.status == "proposed" if table is FollowUp else not _user_touched(s, row):
+                set_status(
+                    row, "unverified", "not_in_approved_notes", f"Not in approved notes revision {rev.revision_no}"
                 )
-            )
-            audit(
-                s,
-                "follow_up",
-                fu.id,
-                "not_in_approved_notes",
-                prev={"status": "proposed"},
-                new={"status": "unverified", "revision_no": rev.revision_no},
-                source="system",
-                meeting_id=m.id,
-            )
+
+
+def _user_touched(s: Session, row: Any) -> bool:
+    """The user changed this history row itself in the inbox: never downgrade it. A row created from a note the user
+    reworded is not protected; its creation audit carries source 'user' but is not an inbox change."""
+    q = select(AuditEvent.id).where(
+        AuditEvent.entity_id == row.id, AuditEvent.source == "user", AuditEvent.action != "created"
+    )
+    return s.scalars(q).first() is not None
 
 
 # ---------------------------------------------------------------- agenda-vs-history (Case B)
@@ -1035,3 +1247,190 @@ def _undiscussed(s: Session, m: Meeting) -> list[dict[str, Any]]:
                     }
                 )
     return out
+
+
+# ---------------------------------------------------------------- member list and name suggestions
+
+
+def import_members(members: list[dict[str, Any]]) -> dict[str, Any]:
+    """Replace the shared member list (both workspaces) with `members` (as names.parse_members_csv returns). New ids:
+    earlier answers keep their names, and rejections then match by name."""
+    with members_session() as s:
+        s.execute(delete(Member))
+        s.add_all(
+            Member(
+                preferred_name=d.get("preferred_name", ""),
+                full_name=d["full_name"],
+                spouse_name=d.get("spouse_name", ""),
+                callings=list(d.get("callings") or []),
+            )
+            for d in members
+        )
+        s.commit()
+    return {"count": len(members)} | ({} if checkpoint(members_engine()) else {"warning": WAL_BUSY})  # old list
+
+
+def delete_members() -> dict[str, Any]:
+    """Purge the shared member list and, in both workspaces, the user's "not this person" answers, and redact names
+    from the audit payloads of every answer except the confirmed names, which stay with their meetings."""
+    with members_session() as s:
+        n = int(s.execute(delete(Member)).rowcount or 0)  # type: ignore[attr-defined]
+        s.commit()
+    clean = checkpoint(members_engine())
+    for wid in WORKSPACES:  # the same purge in each workspace's own database; nothing crosses between them
+        ws = get_workspace(wid)
+        with session_for(ws) as s:
+            s.execute(delete(NameConfirmation).where(NameConfirmation.status == "rejected"))
+            kept = select(NameConfirmation.id)
+            s.execute(
+                update(AuditEvent)
+                .where(AuditEvent.entity_type == "name_confirmation", AuditEvent.entity_id.not_in(kept))
+                .values(prev=null(), new=null())
+            )
+            audit(s, "member_list", "members", "deleted", prev={"count": n}, source="user")  # count only
+            s.commit()
+        clean = checkpoint(ws) and clean
+    return {"deleted": n} | ({} if clean else {"warning": WAL_BUSY})
+
+
+def list_members() -> list[dict[str, Any]]:
+    with members_session() as s:
+        return [
+            {"id": m.id, "preferred_name": m.preferred_name, "full_name": m.full_name, "spouse_name": m.spouse_name}
+            | {"callings": m.callings}
+            for m in s.scalars(select(Member).order_by(Member.full_name))
+        ]
+
+
+def _confirmed(s: Session, meeting_id: str) -> list[tuple[str, list[str], list[str]]]:
+    """The meeting's confirmed names as (heard text, [full name, preferred name], [approved agenda headings that
+    name that member exactly or closely: where notes about them may belong, never evidence])."""
+    rows = s.scalars(
+        select(NameConfirmation)
+        .where(NameConfirmation.meeting_id == meeting_id, NameConfirmation.status == "confirmed")
+        .order_by(NameConfirmation.created_at)
+    ).all()
+    rev = current_agenda(s, meeting_id, approved_only=True)
+    tree = from_dicts(rev.tree) if rev and rows else []
+    links = names.agenda_links(tree, list_members(), [(c.name, c.preferred) for c in rows]) if tree else {}
+    return [(c.heard, list(dict.fromkeys(x for x in (c.name, c.preferred) if x)), links.get(c.name, [])) for c in rows]
+
+
+def name_suggestions(ws: Workspace, meeting_id: str) -> dict[str, Any]:
+    """Member suggestions for name-like mentions in the current transcript, plus the user's answers so far (each
+    with in_transcript: its heard text still occurs) and needs_regeneration: the confirmed names differ from those
+    the current notes were generated with."""
+    with session_for(ws) as s:
+        m = get_meeting(s, meeting_id)
+        tv = latest_transcript(s, meeting_id)
+        rev = current_agenda(s, meeting_id, approved_only=True) or current_agenda(s, meeting_id)
+        members = list_members()
+        answers: list[dict[str, Any]] = [
+            {"id": c.id, "heard": c.heard, "name": c.name, "preferred": c.preferred, "status": c.status}
+            | {
+                "member_id": c.member_id,
+                "in_transcript": tv is not None and bool(pipeline.bare_mentions(c.heard, tv.text)),
+            }
+            for c in s.scalars(
+                select(NameConfirmation)
+                .where(NameConfirmation.meeting_id == meeting_id)
+                .order_by(NameConfirmation.created_at)
+            )
+        ]
+        applied = (m.coverage or {}).get("confirmed_names", [])
+        current = [[h, f] for h, f, _ in _confirmed(s, meeting_id)]
+    tree = from_dicts(rev.tree) if rev else []
+    return {
+        "member_count": len(members),
+        "suggestions": names.suggest(tv.text, tree, members, answers) if tv else [],
+        "answers": answers,
+        "needs_regeneration": current != applied,
+    }
+
+
+def agenda_name_suggestions(ws: Workspace, meeting_id: str, tree: list[AgendaNode]) -> list[dict[str, Any]]:
+    """Member-list spellings for person names in the agenda being drafted (`tree`, the editor's unsaved state):
+    suggest-only, the user edits the heading. None once the agenda is approved: approved revisions are immutable.
+    shortcut: each check runs to the end (the editor sends one per pause in typing) and costs headings x members;
+    fine for a few hundred members, add cancellation or a cache if a much larger list piles up CPU."""
+    validate_tree(tree)  # the same limits as saving the agenda
+    with session_for(ws) as s:
+        m = get_meeting(s, meeting_id)
+        rev = current_agenda(s, meeting_id)
+        if m.state in ("approved", "processing") or (rev is not None and rev.approved_at is not None):
+            return []
+    return names.agenda_suggestions(tree, list_members())
+
+
+def confirm_name(
+    ws: Workspace, meeting_id: str, heard: str, member_id: str, status: str = "confirmed"
+) -> NameConfirmation:
+    """Record the user's answer to a current suggestion: `heard` (one of its heard texts) is, or is not, the member
+    `member_id` (one of its candidates). Confirmed names apply on the next generation; nothing is resolved here."""
+    if status not in ("confirmed", "rejected"):
+        raise ServiceError("status must be confirmed or rejected")
+    key = " ".join(heard.lower().split())
+    sug = next((x for x in name_suggestions(ws, meeting_id)["suggestions"] if x["heard"].lower() == key), None)
+    if sug is None:
+        raise ServiceError("Not a current name suggestion for this transcript (already confirmed, or not heard).")
+    if member_id not in {c["member_id"] for c in sug["candidates"]}:
+        raise NotFound("member is not a candidate for this suggestion")
+    with session_for(ws) as s:
+        m = get_meeting(s, meeting_id)
+        if m.state == "approved":
+            raise ServiceError("Approved meeting; reopen it before confirming names.")
+        _not_processing(m)
+        with members_session() as ms:
+            member = ms.get(Member, member_id)
+        if member is None:
+            raise NotFound("member not found in the member list")
+        c = NameConfirmation(
+            meeting_id=meeting_id,
+            heard=sug["heard"],
+            name=names.display(member.full_name),
+            preferred=names.display(member.preferred_name or member.full_name),
+            status=status,
+            member_id=member.id,
+        )
+        s.add(c)
+        try:
+            s.flush()
+        except IntegrityError as e:  # a simultaneous confirmation of the same heard text won the unique index
+            s.rollback()
+            raise ServiceError("This heard text is already confirmed.") from e
+        audit(
+            s, "name_confirmation", c.id, status, new={"heard": c.heard, "name": c.name}, source="user", meeting_id=m.id
+        )
+        s.commit()
+        return c
+
+
+def delete_name_confirmation(ws: Workspace, meeting_id: str, confirmation_id: str) -> None:
+    """Withdraw an answer. Removing a confirmed name re-checks the notes at once: a note whose name only that
+    confirmation licensed loses "verified" and gets a blocking name finding."""
+    with session_for(ws) as s:
+        m = get_meeting(s, meeting_id)
+        if m.state == "approved":
+            raise ServiceError("Approved meeting; reopen it before changing confirmed names.")
+        _not_processing(m)
+        c = s.get(NameConfirmation, confirmation_id)
+        if c is None or c.meeting_id != meeting_id:
+            raise NotFound("confirmation not found")
+        audit(
+            s,
+            "name_confirmation",
+            c.id,
+            "deleted",
+            prev={"heard": c.heard, "name": c.name},
+            source="user",
+            meeting_id=m.id,
+        )
+        was_confirmed = c.status == "confirmed"
+        s.delete(c)
+        s.flush()
+        tv = latest_transcript(s, meeting_id)
+        if was_confirmed and tv is not None:
+            _rederive(s, meeting_id, tv.text)
+        s.commit()
+    if was_confirmed:
+        revalidate_notes(ws, meeting_id)

@@ -1,0 +1,17 @@
+{"_comment": "SYNTHETIC – fictional meeting, invented names",
+ "workspace": "bishopric",
+ "expected": [
+  {"item": "Stake council report", "keywords": [["temple"], ["january"]], "follow_up": true},
+  {"item": "Assistant ward clerk", "keywords": [["fjeldstad"], ["declin"]], "follow_up": false},
+  {"item": "Youth", "keywords": [["food bank"], ["12", "twelfth"]], "follow_up": true},
+  {"item": "Tithing declaration", "keywords": [["13", "thirteenth", "20", "twentieth", "15", "fifteenth"], ["schedul", "sign", "slot", "appointment"]], "follow_up": true},
+  {"item": "Ward budget", "keywords": [["300", "three hundred"], ["youth"]], "follow_up": false},
+  {"item": "Youth interviews schedule", "keywords": [["interview"], ["january"]], "follow_up": true},
+  {"item": "Missionary fund", "keywords": [["fund"], ["low", "short", "donat", "contribut"]], "follow_up": true},
+  {"item": "Young women class adviser", "keywords": [["castellanos"], ["accept"]], "follow_up": true}
+ ],
+ "not_discussed": ["Brother Matthias Kerrigan-Obi - 2nd Counselor", "Nothing"],
+ "forbidden": [
+  {"keywords": [["fjeldstad"], ["accepted"]], "why": "Brother Fjeldstad declined the assistant ward clerk calling"},
+  {"keywords": [["hargreave"], ["extended", "approved to proceed", "accepted"]], "why": "Sister Hargreave-Dube was only suggested and is under consideration; nothing was approved or extended"}
+ ]}

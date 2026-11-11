@@ -57,10 +57,12 @@ def demo_handler(req: GenerateRequest) -> str:
         words = [w.lower() for w in re.findall(r"[A-Za-z]{4,}", text)]
         for line in excerpt.splitlines():
             if words and any(w in line.lower() for w in words) and len(line.strip()) > 10:
+                # cut at a word boundary: a clipped name ("Sam Alp") is not in the evidence
+                shown = line.strip() if len(line.strip()) <= 140 else line.strip()[:140].rsplit(" ", 1)[0]
                 findings.append(
                     {
                         "agenda_node_id": nid,
-                        "text": f"Discussion indicated: {line.strip()[:140]}",
+                        "text": f"Discussion indicated: {shown}",
                         "category": "discussion",
                         "uncertainty": "medium",
                         "follow_up": "follow" in line.lower(),

@@ -21,6 +21,7 @@ test('requires the launch token', async ({ page }) => {
 
 test('full workflow: agenda → transcript → generate → review → approve → copy, then workspace isolation', async ({ page, context }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+  const cspErrors = watchCsp(page)
   await page.goto(`/#token=${token()}`)
   await expect(page.getByRole('heading', { name: 'Ward Council' })).toBeVisible()
 
@@ -60,6 +61,9 @@ test('full workflow: agenda → transcript → generate → review → approve �
   await noteText.blur()
   await expect(page.getByTestId('note').first().getByText(/Manual, unverified|User corrected/)).toBeVisible()
 
+  // The demo model files the marker line under "SYNTHETIC agenda"; the placement check flags it, and the user dismisses it.
+  await page.locator('li', { hasText: 'May not belong under' }).getByRole('button', { name: 'Dismiss' }).first().click()
+  await expect(page.getByText(/· 0 unresolved high-severity/)).toBeVisible()
   await page.getByTestId('approve-notes').click()
   await expect(page.getByText('approved', { exact: true })).toBeVisible()
   await page.getByTestId('copy-md').click()
@@ -83,6 +87,28 @@ test('full workflow: agenda → transcript → generate → review → approve �
   await page.getByPlaceholder('Keyword, topic, decision…').fill('rotation')
   await page.getByRole('button', { name: 'Search' }).click()
   await expect(page.getByText('Open meeting')).toBeVisible()
+  expect(cspErrors).toEqual([])
+})
+
+// The app sets a strict Content-Security-Policy; the built UI must run under it without violations.
+function watchCsp(page: import('@playwright/test').Page): string[] {
+  const errors: string[] = []
+  page.on('console', (m) => { if (/Content Security Policy/i.test(m.text())) errors.push(m.text()) })
+  return errors
+}
+
+test('agenda screenshots render as blob images under the CSP', async ({ page }) => {
+  const cspErrors = watchCsp(page)
+  await page.goto(`/#token=${token()}`)
+  await go(page, 'New Meeting')
+  await page.getByRole('button', { name: 'Create meeting' }).click()
+  await page.getByRole('button', { name: 'Screenshot' }).click()
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64')
+  await page.locator('input[type=file][accept^="image/"]').setInputFiles({ name: 'synthetic.png', mimeType: 'image/png', buffer: png })
+  const img = page.getByAltText('Agenda screenshot')
+  await expect(img).toBeVisible()
+  expect(await img.evaluate((el) => (el as HTMLImageElement).naturalWidth)).toBe(1)
+  expect(cspErrors).toEqual([])
 })
 
 test('dark mode toggle and settings page load', async ({ page }) => {

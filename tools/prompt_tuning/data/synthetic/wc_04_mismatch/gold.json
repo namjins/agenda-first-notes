@@ -1,0 +1,7 @@
+{"_comment": "SYNTHETIC – fictional meeting, invented names",
+ "workspace": "ward_council",
+ "expected": [],
+ "not_discussed": ["Ward temple night", "Sign-ups", "Childcare", "Trunk-or-treat follow-up", "Ministering assignments", "Youth temple trip"],
+ "forbidden": [
+  {"keywords": [["piano", "snow", "clean", "rota", "salt", "ice melt"]], "why": "none of the transcript topics belong under any agenda heading"}
+ ]}

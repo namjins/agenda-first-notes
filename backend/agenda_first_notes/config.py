@@ -44,10 +44,14 @@ class ModelSettings(BaseModel):
     vision_model: str | None = None
     context_length: int = Field(default=32768, ge=2048, le=262144)
     temperature: float = Field(default=0.1, ge=0.0, le=2.0)
-    max_output_tokens: int = Field(default=4096, ge=256, le=65536)
-    max_review_rounds: int = Field(default=3, ge=0, le=10)
+    max_output_tokens: int = Field(
+        default=12288, ge=256, le=65536
+    )  # dense 24k-char segments overflow 4096 (JSON cut off)
+    max_review_rounds: int = Field(default=0, ge=0, le=10)  # off: rounds lost facts in real tests
     segment_chars: int = Field(default=24000, ge=2000, le=400000)
     segment_overlap_chars: int = Field(default=1500, ge=0, le=20000)
+    think: bool = False  # reasoning models think before answering (extract/review/agenda); off = faster
+    review_by_segment: bool = False  # review long transcripts part by part (sees all of it; more requests)
 
 
 class GlobalSettings(BaseModel):

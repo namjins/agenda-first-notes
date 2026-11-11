@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
-from . import config, history, ingest, jobs, services
+from . import config, history, ingest, jobs, names, pipeline, services
 from . import search as search_mod
 from .agenda import AgendaNode, from_dicts, parse_text, to_dicts, to_text
 from .llm import get_provider
@@ -290,22 +290,30 @@ def upload_agenda_image(ws: WS, meeting_id: str, file: UploadFile = File(...)) -
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
     with session_for(ws) as s:
-        services.get_meeting(s, meeting_id)
+        _agenda_editable(services.get_meeting(s, meeting_id))
+    # OCR can take minutes: run it with no session open, so no SQLite write lock is held meanwhile.
+    extracted, backend, error = None, None, None
+    try:
+        extracted, backend = ingest.extract_agenda_text(data)
+    except (ValueError, ProviderError) as e:
+        error = str(e)
+    with session_for(ws) as s:
+        _agenda_editable(services.get_meeting(s, meeting_id))  # state may have changed during OCR
         count = len(s.scalars(select(AgendaImage).where(AgendaImage.meeting_id == meeting_id)).all())
-        img = AgendaImage(meeting_id=meeting_id, filename="", sha256=services.sha256(data), position=count)
+        img = AgendaImage(
+            meeting_id=meeting_id, filename="", sha256=services.sha256(data), position=count, extracted_text=extracted
+        )
         s.add(img)
         s.flush()
         img.filename = f"{meeting_id}_{img.id}.{fmt}"
-        path = ws.file_path(ws.uploads, img.filename)
-        path.write_bytes(data)
-        extracted, backend, error = None, None, None
-        try:
-            extracted, backend = ingest.extract_agenda_text(data)
-            img.extracted_text = extracted
-        except (ValueError, ProviderError) as e:
-            error = str(e)
+        ws.file_path(ws.uploads, img.filename).write_bytes(data)
         s.commit()
         return {"image": _dump(img), "backend": backend, "error": error, "proposed_text": extracted}
+
+
+def _agenda_editable(m: Meeting) -> None:
+    if m.state in ("approved", "processing"):
+        raise HTTPException(400, "Agenda images cannot be added to an approved or processing meeting.")
 
 
 @router.get("/w/{workspace_id}/meetings/{meeting_id}/agenda/images/{image_id}")
@@ -325,8 +333,6 @@ def get_agenda_image(ws: WS, meeting_id: str, image_id: str) -> Any:
 @router.post("/w/{workspace_id}/meetings/{meeting_id}/agenda/propose")
 def propose_agenda(ws: WS, meeting_id: str) -> dict[str, Any]:
     """Agenda-free meetings: propose headings from the current transcript only."""
-    from . import pipeline
-
     with session_for(ws) as s:
         services.get_meeting(s, meeting_id)
         tv = services.latest_transcript(s, meeting_id)
@@ -782,3 +788,77 @@ def toggle_glossary(ws: WS, doc_id: str, body: dict[str, bool]) -> dict[str, Any
         d.use_as_glossary = bool(body.get("use_as_glossary", False))
         s.commit()
         return {k: v for k, v in _dump(d).items() if k != "text"}
+
+
+# ------------------------------------------------------------------ member list (suggestions only, never evidence)
+# One list shared by both workspaces (maintainer decision 2026-11-08), so these routes take no workspace id.
+
+
+@router.get("/members")
+def members() -> dict[str, Any]:
+    rows = services.list_members()
+    return {"count": len(rows), "members": rows}
+
+
+@router.post("/members")
+def upload_members(file: UploadFile = File(...)) -> dict[str, Any]:  # noqa: B008
+    """Replace the member list from a CSV. The app never saves the file itself; the upload framework may spool a
+    large one (over 1 MB) to a temporary file under <data>/tmp while the request is read, removed afterwards."""
+    if not (file.filename or "").lower().endswith(".csv"):
+        raise HTTPException(400, "Upload the member list as a .csv file.")
+    data = file.file.read(ingest.MAX_TEXT_BYTES + 1)
+    if len(data) > ingest.MAX_TEXT_BYTES:
+        raise HTTPException(413, "Member list too large")
+    try:
+        parsed = names.parse_members_csv(data)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    return services.import_members(parsed)
+
+
+@router.delete("/members")
+def delete_members() -> dict[str, Any]:
+    return services.delete_members()
+
+
+@router.get("/w/{workspace_id}/meetings/{meeting_id}/name-suggestions")
+def name_suggestions(ws: WS, meeting_id: str) -> dict[str, Any]:
+    try:
+        return services.name_suggestions(ws, meeting_id)
+    except services.ServiceError as e:
+        raise _err(e) from e
+
+
+class AgendaNameCheckIn(BaseModel):
+    tree: list[AgendaNode]
+
+
+@router.post("/w/{workspace_id}/meetings/{meeting_id}/agenda/name-check")
+def agenda_name_check(ws: WS, meeting_id: str, body: AgendaNameCheckIn) -> list[dict[str, Any]]:
+    """Spelling suggestions from the member list for person names in the draft agenda; nothing is changed."""
+    try:
+        return services.agenda_name_suggestions(ws, meeting_id, body.tree)
+    except (services.ServiceError, ValueError) as e:
+        raise _err(e) from e
+
+
+class NameAnswerIn(BaseModel):
+    heard: str = Field(max_length=120)
+    member_id: str = Field(max_length=32)
+    status: str = "confirmed"
+
+
+@router.post("/w/{workspace_id}/meetings/{meeting_id}/name-confirmations", status_code=201)
+def confirm_name(ws: WS, meeting_id: str, body: NameAnswerIn) -> dict[str, Any]:
+    try:
+        return _dump(services.confirm_name(ws, meeting_id, body.heard, body.member_id, body.status))
+    except services.ServiceError as e:
+        raise _err(e) from e
+
+
+@router.delete("/w/{workspace_id}/meetings/{meeting_id}/name-confirmations/{confirmation_id}", status_code=204)
+def delete_name_confirmation(ws: WS, meeting_id: str, confirmation_id: str) -> None:
+    try:
+        services.delete_name_confirmation(ws, meeting_id, confirmation_id)
+    except services.ServiceError as e:
+        raise _err(e) from e

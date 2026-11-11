@@ -255,3 +255,41 @@ frontend/.vite/
 # Python
 backend/.venv/
 backend/uv.lock.bak
+
+# Prompt-tuning tool: its synthetic data is tracked (re-include past "data/" above); outputs and venv are not
+!tools/prompt_tuning/data/
+tools/prompt_tuning/.venv/
+tools/prompt_tuning/out/
+tools/prompt_tuning/runs/
+tools/prompt_tuning/**/*.report.txt
+
+# Real meeting samples kept locally by the maintainer; never commit.
+/Sample meetings/
+/sample_meetings/
+# Member, roster, directory and ward lists (real member data); never commit. Every letter case is spelled out:
+# git on Linux matches case-sensitively. Only data-file suffixes, so code such as Members.tsx is never ignored.
+*[Mm][Ee][Mm][Bb][Ee][Rr]*.[Cc][Ss][Vv]
+*[Mm][Ee][Mm][Bb][Ee][Rr]*.[Tt][Ss][Vv]
+*[Mm][Ee][Mm][Bb][Ee][Rr]*.[Xx][Ll][Ss][Xx]
+*[Mm][Ee][Mm][Bb][Ee][Rr]*.[Xx][Ll][Ss]
+*[Mm][Ee][Mm][Bb][Ee][Rr]*.[Oo][Dd][Ss]
+*[Mm][Ee][Mm][Bb][Ee][Rr]*.[Nn][Uu][Mm][Bb][Ee][Rr][Ss]
+*[Rr][Oo][Ss][Tt][Ee][Rr]*.[Cc][Ss][Vv]
+*[Rr][Oo][Ss][Tt][Ee][Rr]*.[Tt][Ss][Vv]
+*[Rr][Oo][Ss][Tt][Ee][Rr]*.[Xx][Ll][Ss][Xx]
+*[Rr][Oo][Ss][Tt][Ee][Rr]*.[Xx][Ll][Ss]
+*[Rr][Oo][Ss][Tt][Ee][Rr]*.[Oo][Dd][Ss]
+*[Rr][Oo][Ss][Tt][Ee][Rr]*.[Nn][Uu][Mm][Bb][Ee][Rr][Ss]
+*[Dd][Ii][Rr][Ee][Cc][Tt][Oo][Rr][Yy]*.[Cc][Ss][Vv]
+*[Dd][Ii][Rr][Ee][Cc][Tt][Oo][Rr][Yy]*.[Tt][Ss][Vv]
+*[Dd][Ii][Rr][Ee][Cc][Tt][Oo][Rr][Yy]*.[Xx][Ll][Ss][Xx]
+*[Dd][Ii][Rr][Ee][Cc][Tt][Oo][Rr][Yy]*.[Xx][Ll][Ss]
+*[Dd][Ii][Rr][Ee][Cc][Tt][Oo][Rr][Yy]*.[Oo][Dd][Ss]
+*[Dd][Ii][Rr][Ee][Cc][Tt][Oo][Rr][Yy]*.[Nn][Uu][Mm][Bb][Ee][Rr][Ss]
+*[Ww][Aa][Rr][Dd]*[Ll][Ii][Ss][Tt]*.[Cc][Ss][Vv]
+*[Ww][Aa][Rr][Dd]*[Ll][Ii][Ss][Tt]*.[Tt][Ss][Vv]
+*[Ww][Aa][Rr][Dd]*[Ll][Ii][Ss][Tt]*.[Xx][Ll][Ss][Xx]
+*[Ww][Aa][Rr][Dd]*[Ll][Ii][Ss][Tt]*.[Xx][Ll][Ss]
+*[Ww][Aa][Rr][Dd]*[Ll][Ii][Ss][Tt]*.[Oo][Dd][Ss]
+*[Ww][Aa][Rr][Dd]*[Ll][Ii][Ss][Tt]*.[Nn][Uu][Mm][Bb][Ee][Rr][Ss]
+!tools/prompt_tuning/data/synthetic/members.csv

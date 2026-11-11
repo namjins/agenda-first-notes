@@ -1,0 +1,17 @@
+{"_comment": "SYNTHETIC – fictional meeting, invented names",
+ "workspace": "ward_council",
+ "expected": [
+  {"item": "Youth camp", "keywords": [["june"], ["22", "twenty-second", "twenty second"]], "follow_up": false},
+  {"item": "Youth camp", "keywords": [["deposit"], ["oyelaran"]], "follow_up": true},
+  {"item": "Service project", "keywords": [["strandquist", "strand quist"], ["yard", "rake", "raking", "leaves", "clean"]], "follow_up": null},
+  {"item": "Service project", "keywords": [["quisenberry"], ["tool", "rake", "glove"]], "follow_up": true},
+  {"item": "Youth temple trip", "keywords": [["recommend"], ["expir", "renew", "check", "review", "interview"]], "follow_up": true},
+  {"item": "Youth activity calendar", "keywords": [["wednesday"], ["7", "seven"]], "follow_up": false},
+  {"item": "Ward mission plan", "keywords": [["dinner", "meal"], ["sign"]], "follow_up": true}
+ ],
+ "not_discussed": ["Upcoming baptisms"],
+ "forbidden": [
+  {"keywords": [["temple"], ["18", "eighteenth"], ["is scheduled for", "set for", "will go on"]], "why": "the 18th was floated but never confirmed; no temple trip date was decided"},
+  {"keywords": [["strandquist"], ["temple", "baptism"]], "why": "the yard cleanup belongs to the service project, not the temple trip"}
+ ],
+ "names": [{"heard": "Corinna Vasquez", "member": "Vasquez, Corinna Mae"}]}

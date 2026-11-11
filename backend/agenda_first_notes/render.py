@@ -31,12 +31,26 @@ def _flat(text: str) -> str:
     return " ".join(text.split())
 
 
-_TAG_LIKE = re.compile(r"\[\s*(?:follow[\s-]*up|owner\s*:[^\]]*)\s*\]", re.I)
+_DASH = r"[\s\-\u2010-\u2015\u2212]*"  # any hyphen/dash look-alike, or none
+_TAG_LIKE = re.compile(
+    rf"\[\s*(?:follow{_DASH}ups?\b|owner\b)[^\]]*\]|\(\s*(?:follow{_DASH}ups?|owner\b[^)]*)\s*\)", re.I
+)
+_BLOCK_START = re.compile(r"^(?:[#>*+\-\u2010-\u2015\u2212]+|\d+[.)])(?:\s+|$)")
+_EMPHASIS = re.compile(r"\*+|~~+|`+|(?<!\w)_+|_+(?!\w)")  # underscores inside words (snake_case) stay
 
 
 def clean_text(text: str) -> str:
-    """Flat, with tag look-alikes removed: only validated follow_up/owner fields may render as tags."""
-    return _flat(_TAG_LIKE.sub(" ", text))
+    """Flat plain text: tag look-alikes removed (only validated follow_up/owner fields render as tags), no leading
+    Markdown block marker (heading, list, quote) and no emphasis markers, so a note stays one plain bullet."""
+    t = _flat(_EMPHASIS.sub("", _TAG_LIKE.sub(" ", text)))
+    while (m := _BLOCK_START.match(t)) is not None:
+        t = t[m.end() :]
+    return t
+
+
+def is_marker(note: dict[str, Any]) -> bool:
+    """A stored "item was discussed" record (verified quotes, no outcome). Never rendered as a bullet itself."""
+    return note.get("text") == NO_CLEAR_OUTCOME
 
 
 def is_follow_up(note: dict[str, Any]) -> bool:
@@ -63,13 +77,28 @@ def render(
     notes: list[dict[str, Any]],
     coverage_complete: bool,
     extra_follow_ups: list[str] | None = None,
+    transcript_version_id: str | None = None,
 ) -> str:
-    """notes: dicts with agenda_node_id, text, follow_up, owner, position, deleted."""
+    """notes: dicts with agenda_node_id, text, follow_up, owner, origin, position, deleted, evidence, stale, status.
+
+    Deleted notes and discussion markers are not rendered as bullets, but a note whose evidence proves its item was
+    discussed (a marker, or a note the reviewer removed) gives an item with nothing rendered on or below it the
+    NO_CLEAR_OUTCOME line instead of "Not discussed." (rules 1 and 5). Evidence counts only when it is current
+    (not stale; from `transcript_version_id` when given) and the note was not deleted by the user: deleting the
+    marker too is the user's explicit "not discussed"."""
     by_node: dict[str, list[dict[str, Any]]] = {}
+    discussed: set[str] = set()
     for n in notes:
-        if n.get("deleted") or not n.get("agenda_node_id"):
+        if not n.get("agenda_node_id"):
             continue
-        by_node.setdefault(n["agenda_node_id"], []).append(n)
+        current = [
+            e for e in n.get("evidence") or [] if transcript_version_id in (None, e.get("transcript_version_id"))
+        ]
+        user_deleted = n.get("deleted") and n.get("origin") == "user"
+        if current and not n.get("stale") and n.get("status") != "unsupported" and not user_deleted:
+            discussed.add(n["agenda_node_id"])
+        if not n.get("deleted") and not is_marker(n):
+            by_node.setdefault(n["agenda_node_id"], []).append(n)
     for lst in by_node.values():
         lst.sort(key=lambda x: x.get("position", 0))
 
@@ -82,8 +111,8 @@ def render(
         lines.append(header)
         lines.append("")
 
-    def has_notes_below(node: AgendaNode) -> bool:
-        return bool(by_node.get(node.id)) or any(has_notes_below(c) for c in node.children)
+    def content_below(node: AgendaNode) -> bool:
+        return bool(by_node.get(node.id)) or node.id in discussed or any(content_below(c) for c in node.children)
 
     def emit(node: AgendaNode, depth: int) -> None:
         pad = "  " * depth
@@ -92,12 +121,15 @@ def render(
         for n in own:
             lines.append(f"{pad}  - {bullet_text(n)}")
         if not own and not node.children:
-            lines.append(f"{pad}  - {NOT_DISCUSSED if coverage_complete else COVERAGE_INCOMPLETE}")
-        elif node.children and not has_notes_below(node):
+            absent = NOT_DISCUSSED if coverage_complete else COVERAGE_INCOMPLETE
+            lines.append(f"{pad}  - {NO_CLEAR_OUTCOME if node.id in discussed else absent}")
+        elif node.children and not content_below(node):
             lines.append(f"{pad}  - {NO_DISCUSSION if coverage_complete else COVERAGE_INCOMPLETE}")
             for c in node.children:
                 emit_bare(c, depth + 1)
             return
+        elif not own and node.id in discussed and not any(content_below(c) for c in node.children):
+            lines.append(f"{pad}  - {NO_CLEAR_OUTCOME}")  # never on a parent whose descendants were discussed
         for c in node.children:
             emit(c, depth + 1)
 

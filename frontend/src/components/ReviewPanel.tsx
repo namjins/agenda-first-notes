@@ -107,13 +107,15 @@ function NoteRow({ n, findings, isSel, onSelect, rows, readOnly, patch, resolve 
   n: Note; findings: Finding[]; isSel: boolean; onSelect: (n: Note | null) => void; rows: { node: AgendaNode; depth: number }[]
   readOnly: boolean; patch: (n: Note, body: Record<string, unknown>) => void; resolve: (f: Finding, resolved: boolean) => void
 }) {
-  const [label, cls] = STATUS_LABEL[n.status]
+  // A user-confirmed name is the user's identification, not the transcript's: never shown as "Source verified".
+  const [label, cls] = n.name_confirmed && n.status === 'verified' ? ['Name confirmed by you', 'tag-warn'] : STATUS_LABEL[n.status]
   const fs = findings.filter((f) => !f.resolved)
   return (
     <li className={`rounded-md border p-2 text-sm ${isSel ? 'ring-2' : ''}`} style={{ borderColor: 'var(--line)', ['--tw-ring-color' as string]: 'var(--accent)' }} data-testid="note">
       <div className="flex flex-wrap items-center gap-1.5">
         <button className={`tag ${cls}`} onClick={() => onSelect(isSel ? null : n)} title="Show evidence">{label}</button>
         {n.stale && <span className="tag tag-bad">Source changed — revalidate</span>}
+        {n.name_confirmed && n.status !== 'verified' && <span className="tag tag-warn">Name confirmed by you</span>}
         <span className="tag tag-muted">{n.category.replaceAll('_', ' ')}</span>
         {n.calling_event && <span className="tag tag-muted">calling: {n.calling_event.replaceAll('_', ' ')}</span>}
         <span className="muted ml-auto text-xs">{n.evidence.length} quote(s)</span>

@@ -1,0 +1,17 @@
+{"_comment": "SYNTHETIC – fictional meeting, invented names",
+ "workspace": "ward_council",
+ "expected": [
+  {"item": "Sacrament bread", "keywords": [["gluten"], ["achterberg", "marisol"]], "follow_up": true},
+  {"item": "Sacrament bread", "keywords": [["gluten"], ["tray"]], "follow_up": null},
+  {"item": "Brother Tobias Nwankwo - Elders Quorum > Updates", "keywords": [["haverkamp"], ["mov"]], "follow_up": false},
+  {"item": "Ministering interviews", "keywords": [["interview"], ["end of", "30", "thirtieth", "november"]], "follow_up": true},
+  {"item": "Sister Marisol Achterberg - Relief Society > Updates", "keywords": [["meal"], ["lindqvist", "baby"]], "follow_up": null},
+  {"item": "Sacrament meeting Christmas program", "keywords": [["december", "dec"], ["20", "twentieth"]], "follow_up": false},
+  {"item": "Sacrament meeting Christmas program", "keywords": [["kettleborough", "rosalind"], ["choir", "practice", "rehears", "music", "coordinat"]], "follow_up": null}
+ ],
+ "not_discussed": ["Calendar", "Service needs", "Sister Ingrid Okonkwo-Halvorsen - Primary", "Nothing", "Brother Desmond Vlasak - Young Men", "Brother Desmond Vlasak - Young Men > Updates"],
+ "forbidden": [
+  {"keywords": [["christmas"], ["gluten", "bread", "celiac"]], "why": "gluten-free sacrament bread is not about the Christmas program"},
+  {"keywords": [["nativity"], ["approved", "will include", "will have a", "agreed"]], "why": "a live nativity was only suggested; no decision was made"}
+ ],
+ "names": [{"heard": "Sister Jonas", "member": "Jones, Harriet Anne"}]}

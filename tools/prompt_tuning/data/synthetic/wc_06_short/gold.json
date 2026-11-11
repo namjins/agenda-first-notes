@@ -1,0 +1,15 @@
+{"_comment": "SYNTHETIC – fictional meeting, invented names",
+ "workspace": "ward_council",
+ "expected": [
+  {"item": "Updates", "keywords": [["pemberton", "achebe"], ["mov", "truck", "load"]], "follow_up": null},
+  {"item": "Updates", "keywords": [["saturday"], ["9", "nine"]], "follow_up": null},
+  {"item": "Ward Christmas party", "keywords": [["12", "twelfth"], ["6", "six"]], "follow_up": false},
+  {"item": "Ward Christmas party", "keywords": [["ham", "main dish"], ["relief", "release"]], "follow_up": null},
+  {"item": "Primary program practice", "keywords": [["saturday"], ["10", "ten"]], "follow_up": false},
+  {"item": "Primary program practice", "keywords": [["fairweather"], ["unlock"]], "follow_up": true}
+ ],
+ "not_discussed": ["Fast offering envelopes"],
+ "forbidden": [
+  {"keywords": [["gluten", "wheat"], ["will provide", "will bring", "[Owner"]], "why": "a gluten-free option was only suggested, never decided or assigned"},
+  {"keywords": [["fast offering", "envelope"], ["pemberton", "christmas", "primary"]], "why": "fast offering envelopes were not discussed; nothing should be filed there"}
+ ]}
