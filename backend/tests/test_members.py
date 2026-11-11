@@ -534,7 +534,7 @@ def test_checkpoint_gives_up_quickly_when_a_reader_holds_a_snapshot(client) -> N
         assert r["deleted"] == 3 and "warning" in r
         t0 = time.perf_counter()
         assert checkpoint(members_engine()) is False
-        assert time.perf_counter() - t0 < 2.5
+        assert time.perf_counter() - t0 < 8  # CI macOS took 3.3 s; the 5 s default would take 15 s
     finally:
         reader.close()
     with members_engine().connect() as conn:  # pooled connections keep their usual timeout
