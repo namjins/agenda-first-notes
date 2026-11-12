@@ -9,7 +9,7 @@ class Segment(BaseModel):
     index: int
     start: int
     end: int
-    status: str = "pending"  # pending | done | failed | cancelled
+    status: str = "pending"  # pending | done | partial | failed | cancelled
     error: str | None = None
 
 

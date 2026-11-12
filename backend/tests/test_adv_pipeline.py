@@ -241,6 +241,41 @@ def raw_finding(**k: Any) -> dict[str, Any]:
     return d
 
 
+def test_cut_off_answer_is_asked_again_then_salvaged_without_repeats() -> None:
+    text = "SYNTHETIC Chair: The picnic is moved to the pavilion. Chair: The budget stays as it is."
+    seg = Segment(index=0, start=0, end=len(text))
+    a = raw_finding(text="The picnic is moved to the pavilion.", evidence=["The picnic is moved to the pavilion."])
+    b = raw_finding(text="The budget stays as it is.", evidence=["The budget stays as it is."])
+    good = json.dumps({"findings": [a, b], "discussed": []})
+    # the model looping on one finding until the token cap: complete findings, then a cut mid-string
+    cut = json.dumps({"findings": [a, b, b, b]})[:-2] + ', {"agenda_node_id": "n1", "text": "The budg'
+
+    def run(*answers: str) -> tuple[Any, int]:
+        asked: list[str] = []  # extraction requests only; the filing request keeps the placement
+
+        def handler(req: GenerateRequest) -> str:
+            if req.purpose != "extract":
+                return '{"placements": []}'
+            asked.append(answers[min(len(asked), len(answers) - 1)])
+            return asked[-1]
+
+        p = FakeProvider(handler)
+        return pipeline.extract_segment(p, SETTINGS, "ward_council", TREE, text, seg, 1, "tv"), len(asked)
+
+    (notes, findings), asked = run(cut, good)  # second answer is fine: nothing lost, nothing flagged
+    assert asked == 2 and len(notes) == 2 and not [f for f in findings if f["category"] == "segment_partial"]
+    (notes, findings), asked = run(cut, cut)  # cut twice: the complete findings once each, and a warning
+    assert asked == 2 and [n["text"] for n in notes] == [a["text"], b["text"]]
+    assert [f["severity"] for f in findings if f["category"] == "segment_partial"] == ["high"]
+    (notes, _), asked = run(good)  # a normal answer is asked once; an exact repeat in it is kept once
+    assert asked == 1 and len(run(json.dumps({"findings": [a, a], "discussed": []}))[0][0]) == 1
+    try:
+        run("not json", '{"findings": [')  # nothing complete to keep: the segment fails as before
+        raise AssertionError("expected PipelineError")
+    except pipeline.PipelineError:
+        pass
+
+
 def test_fragment_cut_from_inside_a_word_is_not_evidence() -> None:
     t = "SYNTHETIC. Chair: Jordan Lee will set up the chairs. Joann Leeds agreed."
     assert evidence.locate("dan Lee will set up the chairs", t) is None

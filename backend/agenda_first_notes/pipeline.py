@@ -121,6 +121,21 @@ def _parse(model: type[BaseModel], raw: str) -> Any:
         raise PipelineError(f"Model returned invalid JSON: {e.errors(include_input=False)[:1]}") from e
 
 
+def _salvage(raw: str) -> ExtractionOutput | None:
+    """The complete findings of a reply cut off mid-JSON: close it after the last finding that still parses."""
+    pos = len(raw)
+    for _ in range(20):
+        pos = raw.rfind("}", 0, pos)
+        if pos == -1:
+            break
+        try:
+            out = ExtractionOutput.model_validate_json(raw[: pos + 1] + "]}")
+        except ValidationError:
+            continue
+        return out if out.findings else None
+    return None
+
+
 def note_dict(f: Finding, ev: list[dict[str, Any]], status: str) -> dict[str, Any]:
     return {
         "agenda_node_id": f.agenda_node_id,
@@ -172,10 +187,39 @@ def extract_segment(
         purpose="extract",
         think=settings.think,
     )
-    out: ExtractionOutput = _parse(ExtractionOutput, provider.generate(req))
+    raw, partial = provider.generate(req), False
+    out: ExtractionOutput
+    try:
+        out = _parse(ExtractionOutput, raw)
+    except PipelineError:
+        # Real tests: about 1 long request in 25 repeats one finding until the token cap and is cut mid-JSON.
+        # Ask once more; if that is unusable too, keep the complete findings before the cut and say so.
+        try:
+            raw2 = provider.generate(req)
+        except ProviderError:
+            raw2 = ""
+        try:
+            out = _parse(ExtractionOutput, raw2)
+        except PipelineError:
+            saved = _salvage(raw2) or _salvage(raw)
+            if saved is None:
+                raise
+            out, partial = saved, True
+    out.findings = list({f.model_dump_json(): f for f in out.findings}.values())  # exact repeats once
     valid_ids = node_ids(tree)
     notes: list[dict[str, Any]] = []
     findings: list[dict[str, Any]] = []
+    if partial:
+        findings.append(
+            _finding(
+                None,
+                "high",
+                "segment_partial",
+                f"Segment {seg.index + 1} of {seg_total} (characters {seg.start}-{seg.end}): the model's answer was "
+                "cut off twice. The notes before the cut were kept; later discussion in this part may be missing.",
+                None,
+            )
+        )
     for f in out.findings:
         if not render.clean_text(f.text):
             continue

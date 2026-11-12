@@ -179,7 +179,7 @@ class App:
                 tree = from_dicts(rev.tree if rev else [])
                 text = {n.id: n.text for n in s.scalars(select(Note).where(Note.meeting_id == meeting.id))}
                 rows = list(s.scalars(select(ReviewFinding).where(ReviewFinding.meeting_id == meeting.id)))
-            errors += [f.message for f in rows if f.category in ("segment_failed", "review_failed")]
+            errors += [f.message for f in rows if f.category in ("segment_failed", "segment_partial", "review_failed")]
             last = max((f.round_no for f in rows), default=0)
             high = {
                 (

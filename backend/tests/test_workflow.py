@@ -369,3 +369,27 @@ def test_long_transcript_segments_without_loss_and_failed_segment_blocks_absence
     statuses = [seg["status"] for seg in review["coverage"]["segments"]]
     assert statuses.count("failed") == 1 and statuses.count("done") == len(statuses) - 1
     assert "Not discussed." not in review["markdown"] and "incomplete" in review["markdown"]
+
+
+def test_cut_off_segment_keeps_its_notes_and_blocks_absence_claims(client, fake_provider) -> None:  # type: ignore[no-untyped-def]
+    body = "SYNTHETIC Chair: Topic A is settled, the picnic is moved to the pavilion."
+    quote = "the picnic is moved to the pavilion"
+
+    def handler(req):  # type: ignore[no-untyped-def]
+        if req.purpose != "extract":
+            return json.dumps({"findings": [], "placements": []})
+        import re
+
+        node = re.search(r"- \[(n[0-9a-f]+)\] Topic A", req.prompt).group(1)  # type: ignore[union-attr]
+        f = {"agenda_node_id": node, "text": "The picnic is moved to the pavilion.", "category": "decision",
+             "uncertainty": "low", "follow_up": False, "owner": None, "calling_event": None, "evidence": [quote]}  # fmt: skip
+        return json.dumps({"findings": [f, f]})[:-2] + ', {"agenda_node_id": "' + node + '", "text": "The pic'
+
+    fake_provider.handler = handler
+    mid = run_meeting(client, WC, "Topic A\nTopic B", body)
+    res = process_sync(WC, mid)
+    review = client.get(f"/api/w/{WC}/meetings/{mid}/review").json()
+    assert res["coverage_complete"] is False and res["state"] == "review_required"
+    assert [seg["status"] for seg in review["coverage"]["segments"]] == ["partial"]
+    assert "moved to the pavilion" in review["markdown"] and "Not discussed." not in review["markdown"]
+    assert any(f["category"] == "segment_partial" for f in review["findings"])

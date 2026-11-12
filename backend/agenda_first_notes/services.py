@@ -519,7 +519,8 @@ def process_meeting(
                 notes, findings = pipeline.extract_segment(
                     provider, settings, wid, tree, text, seg, len(segs), tv_id, confirmed
                 )
-                seg.status = "done"
+                # partial: answer cut off, notes before the cut kept; coverage then counts as incomplete
+                seg.status = "partial" if any(f["category"] == "segment_partial" for f in findings) else "done"
                 all_notes.extend(notes)
                 all_findings.extend(findings)
             except (pipeline.PipelineError, ProviderError) as e:
@@ -536,7 +537,7 @@ def process_meeting(
                     }
                 )
             _save_coverage(ws, meeting_id, segs)
-        if not any(x.status == "done" for x in segs):
+        if not any(x.status in ("done", "partial") for x in segs):
             first = next((x.error for x in segs if x.error), "")
             raise ServiceError(f"No part of the transcript could be processed; previous notes kept. {first}")
         notes = pipeline.dedupe(all_notes, text, confirmed)
