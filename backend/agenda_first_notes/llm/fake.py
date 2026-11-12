@@ -36,6 +36,8 @@ def demo_handler(req: GenerateRequest) -> str:
 
     if req.purpose == "review":
         return json.dumps({"findings": []})
+    if req.purpose == "file":
+        return json.dumps({"placements": []})  # keep the extraction's placement
     if req.purpose == "agenda":
         lines = [
             ln.strip()

@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field, ValidationError
 from . import evidence, prompts, render
 from .agenda import AgendaNode, node_ids, outline, walk
 from .config import ModelSettings
-from .llm.base import GenerateRequest, ModelProvider
+from .llm.base import GenerateRequest, ModelProvider, ProviderError
 from .models import CALLING_EVENTS, NOTE_CATEGORIES
 from .segmentation import Segment, segment
 
@@ -41,6 +41,15 @@ class DiscussedItem(BaseModel):
 class ExtractionOutput(BaseModel):
     findings: list[Finding] = Field(default_factory=list)
     discussed: list[DiscussedItem] = Field(default_factory=list)
+
+
+class Placement(BaseModel):
+    note: int
+    agenda_node_id: str | None = None
+
+
+class FilingOutput(BaseModel):
+    placements: list[Placement] = Field(default_factory=list)
 
 
 class ReviewItem(BaseModel):
@@ -217,19 +226,22 @@ def extract_segment(
                     None,
                 )
             )
-        if f.agenda_node_id is None and tree and ev:
-            own.append(
-                _finding(
-                    None,
-                    "low",
-                    "unmapped",
-                    f"Substantive discussion did not map to an agenda item: {n['text'][:100]!r}",
-                    None,
-                )
-            )
         n["_findings"] = own
         findings.extend(own)
         notes.append(n)
+    if settings.filing_step and tree:
+        file_notes(provider, settings, workspace_id, tree, full_text, notes)
+    for n in notes:
+        if n["agenda_node_id"] is None and tree and n["evidence"]:
+            unmapped = _finding(
+                None,
+                "low",
+                "unmapped",
+                f"Substantive discussion did not map to an agenda item: {n['text'][:100]!r}",
+                None,
+            )
+            n["_findings"].append(unmapped)
+            findings.append(unmapped)
     for d in out.discussed:
         # Discussed without a clear outcome (rule 5 fallback); only with located evidence, never as absence.
         if d.agenda_node_id in valid_ids:
@@ -237,6 +249,53 @@ def extract_segment(
             if ev:
                 notes.append(marker_note(d.agenda_node_id, ev))
     return notes, findings
+
+
+FILING_LEAD_IN = 400  # transcript characters shown before a note's first quote
+
+
+def file_notes(
+    provider: ModelProvider,
+    settings: ModelSettings,
+    workspace_id: str,
+    tree: list[AgendaNode],
+    full_text: str,
+    notes: list[dict[str, Any]],
+) -> None:
+    """Second, short request: where does each evidenced note belong? Only agenda_node_id changes, in place.
+    A failed or invalid answer leaves the extraction's own placement, so this step can never lose a note."""
+    cands = [n for n in notes if n["evidence"]]
+    if not cands:
+        return
+
+    def block(i: int, n: dict[str, Any]) -> str:
+        first, *rest = n["evidence"]
+        passage = full_text[max(0, first["start"] - FILING_LEAD_IN) : first["end"]]
+        passage = " … ".join([passage, *(e["quote"] for e in rest)])
+        return f"[{i}] {prompts.fence(n['text'])}\ncontext:\n<<<TRANSCRIPT\n{prompts.fence(passage)}\nTRANSCRIPT>>>"
+
+    req = GenerateRequest(
+        model=settings.primary_model or "",
+        system=prompts.system_prompt(workspace_id),
+        prompt=prompts.FILING_INSTRUCTIONS.format(
+            outline=prompts.fence(outline(tree)),
+            notes="\n\n".join(block(i, n) for i, n in enumerate(cands, 1)),
+        ),
+        json_schema=strict_schema(FilingOutput),
+        temperature=settings.temperature,
+        num_ctx=settings.context_length,
+        max_tokens=min(settings.max_output_tokens, 4096),
+        purpose="file",
+        think=settings.think,
+    )
+    try:
+        out: FilingOutput = _parse(FilingOutput, provider.generate(req))
+    except (PipelineError, ProviderError):
+        return
+    valid_ids = node_ids(tree)
+    for p in out.placements:
+        if 1 <= p.note <= len(cands) and (p.agenda_node_id is None or p.agenda_node_id in valid_ids):
+            cands[p.note - 1]["agenda_node_id"] = p.agenda_node_id
 
 
 def marker_note(agenda_node_id: str | None, ev: list[dict[str, Any]]) -> dict[str, Any]:

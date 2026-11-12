@@ -52,6 +52,7 @@ class ModelSettings(BaseModel):
     segment_overlap_chars: int = Field(default=1500, ge=0, le=20000)
     think: bool = False  # reasoning models think before answering (extract/review/agenda); off = faster
     review_by_segment: bool = False  # review long transcripts part by part (sees all of it; more requests)
+    filing_step: bool = True  # second short request per segment: where does each note belong (real tests: +7 pts)
 
 
 class GlobalSettings(BaseModel):

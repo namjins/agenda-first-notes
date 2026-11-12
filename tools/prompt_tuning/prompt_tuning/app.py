@@ -87,6 +87,8 @@ class App:
         think: bool = False,
         review_by_segment: bool = False,
         segment_chars: int = 24000,
+        context_length: int = 32768,
+        filing_step: bool = True,
         provider: ModelProvider | None = None,  # tests pass the app's FakeProvider
     ) -> None:
         self._tmp = tempfile.TemporaryDirectory(prefix="afn-tune-")
@@ -99,6 +101,8 @@ class App:
         s.models.think = think
         s.models.review_by_segment = review_by_segment
         s.models.segment_chars = segment_chars
+        s.models.context_length = context_length
+        s.models.filing_step = filing_step
         config.save_settings(s)
         self.model = model
         # OllamaProvider refuses non-loopback hosts; think=False handling lives there

@@ -56,6 +56,7 @@ export default function SettingsPage() {
             <label key={k} className="text-sm"><span className="muted block text-xs">{label}</span><input className="input" type="number" step={k === 'temperature' ? 0.05 : 1} value={m[k]} onChange={(e) => set(k, Number(e.target.value))} /></label>
           ))}
         </div>
+        <label className="mt-3 flex items-center gap-2 text-sm"><input type="checkbox" checked={m.filing_step} onChange={(e) => set('filing_step', e.target.checked)} />Double-check where each note belongs (one extra short request per segment)</label>
         <p className="muted mt-2 text-xs">Models run sequentially to conserve memory. Lower-memory machines: choose a smaller model and reduce context length. Transcripts longer than one segment are processed in overlapping chunks; nothing is truncated.</p>
       </Section>
       <div className="flex items-center gap-3"><button className="btn btn-primary" onClick={save}>Save settings</button>{saved && <span className="tag tag-ok">Saved</span>}<span className="muted text-xs">{paths}</span></div>

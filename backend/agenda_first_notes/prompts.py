@@ -5,10 +5,11 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 
-PROMPT_VERSION = "1.7"  # 1.1 fenced text; 1.2/1.3 every discussed item; 1.4 place only under the item discussed;
+PROMPT_VERSION = "1.8"  # 1.1 fenced text; 1.2/1.3 every discussed item; 1.4 place only under the item discussed;
 # 1.5 user-confirmed names block
 # 1.6 proposed headings: fewer, broader, from every segment
 # 1.7 confirmed names link to the agenda item naming that person
+# 1.8 optional filing step (FILING_INSTRUCTIONS); extraction prompts unchanged
 
 _DELIM_RUN = re.compile(r"<{3,}|>{3,}")
 
@@ -85,6 +86,22 @@ TRANSCRIPT>>>
 
 Return JSON with a "findings" list. Each finding: agenda_node_id (string id from the agenda or null), text (one concise outcome sentence), category (one of: decision, proposed_decision, assignment, calling_event, date, status_change, clarification, open_question, dependency, follow_up_candidate, completion, uncertainty, discussion), uncertainty (low|medium|high), follow_up (bool), owner (full name or null), calling_event (lifecycle event or null), evidence (list of exact verbatim quotes from the excerpt that support this exact claim at this exact certainty). Return an empty findings list if nothing substantive is in this excerpt.
 Also return a "discussed" list: one entry for EVERY agenda item that the excerpt clearly discusses (only items the discussion is actually about, as for findings), whether or not a finding above records an outcome for it. Each entry: agenda_node_id (string id from the agenda), evidence (exact verbatim quotes from the excerpt showing that discussion). Do not list items that are only mentioned in passing or not discussed at all."""
+
+FILING_INSTRUCTIONS = """Approved agenda (address nodes by the id in brackets):
+{outline}
+
+Below are notes already written from one meeting transcript. Do not change, judge or rewrite them. Your only task is to decide which agenda item each note belongs under.
+Each note has its number, its text, and its "context": the transcript passage the note came from, including what was said just before it.
+
+{notes}
+
+For each note, work out what its passage is about: which person, organisation or topic. Then choose the MOST SPECIFIC agenda item that names that person, organisation or topic.
+- If an agenda item names a person, notes about that person go under that item, not under its group heading and not under another person's item.
+- Use a group heading only when the note fits the group but none of the items under it.
+- What was said just before the passage often shows which agenda item the meeting had reached. Use it, but a change of topic inside the passage wins.
+- If no agenda item fits, answer null. Never choose an item only because it is nearby in the agenda or was discussed just before.
+
+Return JSON with a "placements" list holding one entry for EVERY note: note (the note's number), agenda_node_id (string id from the agenda, or null)."""
 
 REVIEW_INSTRUCTIONS = """You are an adversarial reviewer. Check each draft note against ONLY its cited evidence quotes and the agenda.
 The evidence quotes attached to each note are verbatim passages that have already been verified to exist in the transcript; do not dispute their existence. Judge whether they SUPPORT the note's claim at the stated certainty.

@@ -154,6 +154,13 @@ def _common(p: argparse.ArgumentParser) -> None:
         "--review-by-segment", action="store_true", help="review long transcripts part by part (app setting)"
     )
     p.add_argument("--segment-chars", type=int, default=24000, help="transcript chunk size per request (app setting)")
+    p.add_argument("--context-length", type=int, default=32768, help="model context window (app setting)")
+    p.add_argument(
+        "--filing-step",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="ask separately where each note belongs (app setting, on by default)",
+    )
 
 
 def _synthetic(data: list[Path]) -> bool:
@@ -186,6 +193,8 @@ def _setup(args: argparse.Namespace) -> tuple[App, list[Meeting]]:
         args.think,
         args.review_by_segment,
         args.segment_chars,
+        args.context_length,
+        args.filing_step,
     ), meetings
 
 

@@ -96,7 +96,7 @@ export interface ModelsResponse { connected: boolean; host: string; models: Mode
 export interface Settings {
   models: {
     ollama_host: string; primary_model: string | null; reviewer_model: string | null; vision_model: string | null
-    context_length: number; temperature: number; max_output_tokens: number; max_review_rounds: number; segment_chars: number; segment_overlap_chars: number
+    context_length: number; temperature: number; max_output_tokens: number; max_review_rounds: number; segment_chars: number; segment_overlap_chars: number; filing_step: boolean
   }
   theme: string
 }

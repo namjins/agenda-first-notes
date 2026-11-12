@@ -61,7 +61,7 @@ One exception (maintainer decision, 2026-11-08): the member list is shared by bo
 
 ```sh
 cd backend && uv sync --all-extras
-uv run pytest -q                       # 240 tests (+1 real-model, skipped), synthetic data, fake model
+uv run pytest -q                       # 243 tests (+1 real-model, skipped), synthetic data, fake model
 uv run ruff check . && uv run ruff format --check . && uv run mypy
 uv run agenda-first-notes serve|paths|migrate|audit [--staged]
 AFN_REAL_MODEL=<model> uv run pytest tests/test_real_model.py -s   # optional, needs local Ollama

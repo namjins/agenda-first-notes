@@ -680,7 +680,7 @@ def test_k6_k7_user_deletions_and_old_transcripts_never_mark_an_item_discussed()
 
 
 def test_k6_extraction_prompt_lists_every_discussed_item() -> None:
-    assert prompts.PROMPT_VERSION == "1.7" and "EVERY agenda item" in prompts.EXTRACT_INSTRUCTIONS
+    assert prompts.PROMPT_VERSION == "1.8" and "EVERY agenda item" in prompts.EXTRACT_INSTRUCTIONS
 
 
 def test_k_merge_rederives_status_with_the_transcript() -> None:
@@ -820,7 +820,7 @@ def test_l5_placement_must_be_about_the_item_not_the_nearest_one() -> None:
     assert not pipeline.placement_findings({**off, "source_node_id": "c1"}, tree, t)  # the user moved it there
     out = render.render(title="", meeting_date=None, tree=tree, notes=[near], coverage_complete=True)
     assert "  - Food drive\n    - Not discussed." in out  # leaves render from their own evidence only
-    assert "ONLY when the discussion is actually about" in prompts.CORE_POLICY and prompts.PROMPT_VERSION == "1.7"
+    assert "ONLY when the discussion is actually about" in prompts.CORE_POLICY and prompts.PROMPT_VERSION == "1.8"
 
 
 def test_l6_numbers_and_times_must_be_in_the_evidence() -> None:
@@ -930,3 +930,38 @@ def test_review_by_segment_reads_every_part_and_checks_each_note_once() -> None:
     assert any(hit for _, hit in seen)
     assert any(f["action"] == "added" for f in findings) and material >= 1
     assert any(n["text"] == "Bus booking for the youth trip." for n in notes)
+
+
+# ---- filing step (SYNTHETIC) ----
+
+
+def test_filing_step_only_moves_notes_and_never_loses_one() -> None:
+    t = "SYNTHETIC\nnow the youth: the campout is moved to June.\nthe roof leak was repaired last week.\n"
+    ext = json.dumps(
+        {
+            "findings": [
+                raw_finding(
+                    agenda_node_id="n1", text="Campout moved to June.", evidence=["the campout is moved to June"]
+                ),
+                raw_finding(agenda_node_id="n1", text="Roof leak repaired.", evidence=["the roof leak was repaired"]),
+            ],
+            "discussed": [],
+        }
+    )
+    seg = Segment(index=0, start=0, end=len(t))
+    off = SETTINGS.model_copy(update={"filing_step": False})
+
+    def run(filing: str, settings: ModelSettings = SETTINGS) -> tuple[list[Any], list[GenerateRequest]]:
+        p = FakeProvider(lambda r: filing if r.purpose == "file" else ext)
+        notes, findings = pipeline.extract_segment(p, settings, "ward_council", TREE, t, seg, 1, "tv")
+        return [(n["text"], n["agenda_node_id"]) for n in notes] + [f["category"] for f in findings], p.requests
+
+    moved = '{"placements": [{"note": 1, "agenda_node_id": "n2"}, {"note": 2, "agenda_node_id": null}]}'
+    out, reqs = run(moved)
+    assert out == [("Campout moved to June.", "n2"), ("Roof leak repaired.", None), "unmapped"]
+    assert "now the youth: the campout is moved to June" in reqs[1].prompt  # the lead-in is shown
+    bad = '{"placements": [{"note": 1, "agenda_node_id": "nope"}, {"note": 9, "agenda_node_id": "n2"}]}'
+    kept = [("Campout moved to June.", "n1"), ("Roof leak repaired.", "n1")]
+    assert run(bad)[0] == kept and run("not json")[0] == kept  # invalid answers keep the extraction's placement
+    out, reqs = run(moved, off)
+    assert out == kept and len(reqs) == 1  # switched off: no second request
