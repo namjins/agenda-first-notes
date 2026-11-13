@@ -715,7 +715,7 @@ def test_k6_k7_user_deletions_and_old_transcripts_never_mark_an_item_discussed()
 
 
 def test_k6_extraction_prompt_lists_every_discussed_item() -> None:
-    assert prompts.PROMPT_VERSION == "1.8" and "EVERY agenda item" in prompts.EXTRACT_INSTRUCTIONS
+    assert prompts.PROMPT_VERSION == "1.9" and "EVERY agenda item" in prompts.EXTRACT_INSTRUCTIONS
 
 
 def test_k_merge_rederives_status_with_the_transcript() -> None:
@@ -855,7 +855,7 @@ def test_l5_placement_must_be_about_the_item_not_the_nearest_one() -> None:
     assert not pipeline.placement_findings({**off, "source_node_id": "c1"}, tree, t)  # the user moved it there
     out = render.render(title="", meeting_date=None, tree=tree, notes=[near], coverage_complete=True)
     assert "  - Food drive\n    - Not discussed." in out  # leaves render from their own evidence only
-    assert "ONLY when the discussion is actually about" in prompts.CORE_POLICY and prompts.PROMPT_VERSION == "1.8"
+    assert "ONLY when the discussion is actually about" in prompts.CORE_POLICY and prompts.PROMPT_VERSION == "1.9"
 
 
 def test_l6_numbers_and_times_must_be_in_the_evidence() -> None:
@@ -935,6 +935,32 @@ def test_agenda_proposal_covers_every_segment_and_drops_repeats() -> None:
     )
     assert len(p.requests) > 1
     assert [n.text for n in tree] == ["Budget", "Yard cleanup"]
+
+
+def test_too_many_proposed_headings_are_combined_and_a_bad_answer_keeps_them() -> None:
+    # SYNTHETIC: one segment proposing 8 headings (limit 6) is followed by one short request to combine them.
+    proposed = [{"text": f"Topic {i}", "children": []} for i in range(8)]
+
+    def run(merge_answer: str) -> tuple[list[str], list[GenerateRequest]]:
+        p = FakeProvider(lambda r: merge_answer if r.purpose == "merge" else json.dumps({"topics": proposed}))
+        tree = pipeline.propose_agenda(p, ModelSettings(primary_model="m"), "bishopric", "SYNTHETIC talk.")
+        return [n.text for n in tree], p.requests
+
+    heads, reqs = run(json.dumps({"topics": [{"text": "Topics 0-3", "children": []}, {"text": "Topics 4-7"}]}))
+    assert heads == ["Topics 0-3", "Topics 4-7"] and [r.purpose for r in reqs] == ["agenda", "merge"]
+    assert (
+        "at most 6 headings" in reqs[1].prompt and "- Topic 7" in reqs[1].prompt and "SYNTHETIC" not in reqs[1].prompt
+    )
+    for bad in ("not json", json.dumps({"topics": []}), json.dumps({"topics": proposed + proposed})):
+        assert run(bad)[0] == [t["text"] for t in proposed]  # unusable, empty or no shorter: proposals kept
+    nested = [{"text": f"Group {i}", "children": [{"text": f"Sub {i}a"}, {"text": f"Sub {i}b"}]} for i in range(3)]
+    assert run(json.dumps({"topics": nested[:2]}))[0] == ["Group 0", "Group 1"]  # 6 fit the limit: nesting stays
+    p = FakeProvider(lambda _r: json.dumps({"topics": nested}))  # 9 before and after: sub-headings are dropped
+    tree = pipeline.propose_agenda(p, ModelSettings(primary_model="m"), "bishopric", "SYNTHETIC talk.")
+    assert [(n.text, n.kind, n.children) for n in tree] == [(f"Group {i}", "topic", []) for i in range(3)]
+    few = FakeProvider(lambda _r: json.dumps({"topics": proposed[:6]}))
+    pipeline.propose_agenda(few, ModelSettings(primary_model="m"), "bishopric", "SYNTHETIC talk.")
+    assert [r.purpose for r in few.requests] == ["agenda"]  # within the limit: no second request
 
 
 def test_review_by_segment_reads_every_part_and_checks_each_note_once() -> None:

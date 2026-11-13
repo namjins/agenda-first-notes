@@ -1012,7 +1012,9 @@ def _disputes_present_name(item: ReviewItem, note: dict[str, Any]) -> bool:
 
 def propose_agenda(provider: ModelProvider, settings: ModelSettings, workspace_id: str, text: str) -> list[AgendaNode]:
     """Headings from the whole transcript: one proposal per segment (a long meeting's later topics count too),
-    exact-duplicate top-level headings dropped. The user reviews and edits them before approving (rule 2)."""
+    exact-duplicate top-level headings dropped, then one short request combines them into at most
+    min(10, 5 + segments) headings (real tests: 80-90 headings for a 4-segment meeting without it). The user
+    reviews and edits them before approving (rule 2)."""
 
     def conv(t: TopicProposal) -> AgendaNode:
         kids = [conv(c) for c in t.children if c.text.strip()]
@@ -1020,9 +1022,8 @@ def propose_agenda(provider: ModelProvider, settings: ModelSettings, workspace_i
 
     out: list[AgendaNode] = []
     seen: set[str] = set()
-    for seg in segment(text, settings.segment_chars, settings.segment_overlap_chars) or [
-        Segment(index=0, start=0, end=0)
-    ]:
+    segs = segment(text, settings.segment_chars, settings.segment_overlap_chars) or [Segment(index=0, start=0, end=0)]
+    for seg in segs:
         req = GenerateRequest(
             model=settings.primary_model or "",
             system=prompts.system_prompt(workspace_id),
@@ -1041,6 +1042,33 @@ def propose_agenda(provider: ModelProvider, settings: ModelSettings, workspace_i
             if key and key not in seen:
                 seen.add(key)
                 out.append(conv(t))
+    limit = min(10, 5 + len(segs))  # judgment call from two real no-agenda meetings; the user still edits the result
+    total = sum(1 for _ in walk(out))
+    if total > limit:
+        req = GenerateRequest(
+            model=settings.primary_model or "",
+            system=prompts.system_prompt(workspace_id),
+            prompt=prompts.AGENDA_MERGE_INSTRUCTIONS.format(
+                parts=len(segs),
+                limit=limit,
+                headings=prompts.fence("\n".join(f"{'  ' * d}- {n.text}" for n, d in walk(out))),
+            ),
+            json_schema=strict_schema(AgendaProposal),
+            temperature=settings.temperature,
+            num_ctx=settings.context_length,
+            max_tokens=min(settings.max_output_tokens, 4096),
+            purpose="merge",
+            think=settings.think,
+        )
+        try:
+            merged = [conv(t) for t in _parse(AgendaProposal, provider.generate(req)).topics if t.text.strip()]
+        except (PipelineError, ProviderError):
+            merged = []
+        if merged and sum(1 for _ in walk(merged)) < total:  # unusable or no shorter: keep the proposals
+            out = merged
+        if sum(1 for _ in walk(out)) > limit:
+            # Real tests: the model keeps its sub-headings whatever the limit says; they go first.
+            out = [n.model_copy(update={"children": [], "kind": "topic"}) for n in out]
     return out
 
 

@@ -27,7 +27,7 @@ class GenerateRequest:
     temperature: float = 0.1
     num_ctx: int = 32768
     max_tokens: int = 4096
-    purpose: str = "extract"  # extract | file | review | agenda | ocr | test
+    purpose: str = "extract"  # extract | file | review | agenda | merge | ocr | test
     think: bool = False  # let reasoning models think first (slower; uses part of max_tokens)
 
 

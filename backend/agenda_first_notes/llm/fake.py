@@ -38,6 +38,8 @@ def demo_handler(req: GenerateRequest) -> str:
         return json.dumps({"findings": []})
     if req.purpose == "file":
         return json.dumps({"placements": []})  # keep the extraction's placement
+    if req.purpose == "merge":
+        return json.dumps({"topics": []})  # keep the proposed headings
     if req.purpose == "agenda":
         lines = [
             ln.strip()

@@ -5,11 +5,12 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 
-PROMPT_VERSION = "1.8"  # 1.1 fenced text; 1.2/1.3 every discussed item; 1.4 place only under the item discussed;
+PROMPT_VERSION = "1.9"  # 1.1 fenced text; 1.2/1.3 every discussed item; 1.4 place only under the item discussed;
 # 1.5 user-confirmed names block
 # 1.6 proposed headings: fewer, broader, from every segment
 # 1.7 confirmed names link to the agenda item naming that person
 # 1.8 optional filing step (FILING_INSTRUCTIONS); extraction prompts unchanged
+# 1.9 proposed headings are combined into one short agenda (AGENDA_MERGE_INSTRUCTIONS); other prompts unchanged
 
 _DELIM_RUN = re.compile(r"<{3,}|>{3,}")
 
@@ -125,6 +126,12 @@ AGENDA_PROPOSAL_INSTRUCTIONS = """No agenda was supplied. From the transcript ex
 <<<TRANSCRIPT
 {excerpt}
 TRANSCRIPT>>>
+Return JSON: {{"topics": [{{"text": "...", "children": [{{"text": "..."}}]}}]}}"""
+
+AGENDA_MERGE_INSTRUCTIONS = """These agenda headings were proposed separately from {parts} consecutive part(s) of one meeting's transcript, so they overlap and are too detailed. Combine them into one agenda for the whole meeting with at most {limit} headings in total. Merge headings about the same or closely related topics into one broader heading. Keep the order in which topics first came up. Do not use sub-headings unless one heading would otherwise hide clearly separate topics; sub-headings count toward the total. Use only topics from the list: do not invent a topic, and do not drop a substantive topic; fold it into a broader heading instead. Keep the wording and names of the proposed headings where possible.
+<<<HEADINGS
+{headings}
+HEADINGS>>>
 Return JSON: {{"topics": [{{"text": "...", "children": [{{"text": "..."}}]}}]}}"""
 
 OCR_INSTRUCTIONS = """This image is a screenshot of a meeting agenda. Transcribe every agenda line exactly as written (spelling, capitalization, punctuation). Represent nesting with two leading spaces per level. Output only the agenda lines, one per line, no commentary, no bullets."""
