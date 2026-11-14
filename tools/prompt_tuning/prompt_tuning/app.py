@@ -89,6 +89,7 @@ class App:
         segment_chars: int = 24000,
         context_length: int = 32768,
         filing_step: bool = True,
+        extraction_passes: int = 1,
         provider: ModelProvider | None = None,  # tests pass the app's FakeProvider
     ) -> None:
         self._tmp = tempfile.TemporaryDirectory(prefix="afn-tune-")
@@ -103,6 +104,7 @@ class App:
         s.models.segment_chars = segment_chars
         s.models.context_length = context_length
         s.models.filing_step = filing_step
+        s.models.extraction_passes = extraction_passes
         config.save_settings(s)
         self.model = model
         # OllamaProvider refuses non-loopback hosts; think=False handling lives there

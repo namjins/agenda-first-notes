@@ -393,3 +393,36 @@ def test_cut_off_segment_keeps_its_notes_and_blocks_absence_claims(client, fake_
     assert [seg["status"] for seg in review["coverage"]["segments"]] == ["partial"]
     assert "moved to the pavilion" in review["markdown"] and "Not discussed." not in review["markdown"]
     assert any(f["category"] == "segment_partial" for f in review["findings"])
+
+
+def test_extra_extraction_passes_add_notes_and_a_failed_extra_pass_loses_nothing(client, fake_provider) -> None:  # type: ignore[no-untyped-def]
+    from agenda_first_notes import config
+
+    s = config.load_settings()
+    s.models.extraction_passes = 3
+    config.save_settings(s)
+    body = "SYNTHETIC Chair: The picnic is moved to the pavilion. Chair: The budget stays as it is this year."
+    facts = ["The picnic is moved to the pavilion.", "The budget stays as it is this year."]
+    asked: list[int] = []
+
+    def handler(req):  # type: ignore[no-untyped-def]
+        if req.purpose != "extract":
+            return json.dumps({"findings": [], "placements": []})
+        import re
+
+        asked.append(len(asked))
+        if len(asked) == 3:
+            return "not json"  # the third pass fails (twice: it is asked again once)
+        node = re.search(r"- \[(n[0-9a-f]+)\] Topic A", req.prompt).group(1)  # type: ignore[union-attr]
+        f = {"agenda_node_id": node, "text": facts[0] if len(asked) == 1 else facts[1], "category": "decision",
+             "uncertainty": "low", "follow_up": False, "owner": None, "calling_event": None,
+             "evidence": [(facts[0] if len(asked) == 1 else facts[1]).rstrip(".")]}  # fmt: skip
+        same = {**f, "text": facts[0], "evidence": [facts[0].rstrip(".")]}  # pass 2 repeats pass 1's note too
+        return json.dumps({"findings": [f] if len(asked) == 1 else [same, f], "discussed": []})
+
+    fake_provider.handler = handler
+    mid = run_meeting(client, WC, "Topic A\nTopic B", body)
+    res = process_sync(WC, mid)
+    md = client.get(f"/api/w/{WC}/meetings/{mid}/review").json()["markdown"]
+    assert res["coverage_complete"] is True and len(asked) == 4
+    assert md.count(facts[0]) == 1 and md.count(facts[1]) == 1  # both passes' notes, the repeat merged

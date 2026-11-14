@@ -380,3 +380,27 @@ def same_claim(a: str, b: str) -> bool:
     ca = {_stem(w) for w in na} - STOPWORDS - _FILLER_WORDS
     cb = {_stem(w) for w in nb} - STOPWORDS - _FILLER_WORDS
     return bool(ca) and ca == cb
+
+
+def _content(text: str) -> tuple[set[str], set[str], set[str]]:
+    """Content-word stems, negations and number words of a text."""
+    low = re.sub(r"[^a-z0-9 ]", " ", fold(text).lower().replace("n't", " nt")).split()
+    stems = {_stem(w) for w in low} - STOPWORDS - _FILLER_WORDS
+    return stems, set(low) & NEGATIONS, {w for w in low if any(c.isdigit() for c in w)}
+
+
+def similar_claim(a: str, b: str, quotes_a: list[str], quotes_b: list[str]) -> bool:
+    """The same finding worded twice (overlapping segments, repeated extraction passes): same_claim, or at least
+    7 in 10 of the shorter text's content words are in the other, with the same negations and numbers, unless EACH
+    text has a word of its own that comes from its evidence quotes. Such a word is a fact from the transcript (a
+    name, place, object), so "at the church" and "at the park" stay apart; a word of its own that is not in the
+    quotes is only the model's wording ("a participant suggested" / "the speaker proposed").
+
+    shortcut: lexical; threshold chosen on real passes. Only for merging fresh model notes; comparisons with
+    user-touched notes keep the strict same_claim."""
+    if same_claim(a, b):
+        return True
+    (sa, na, da), (sb, nb, db) = _content(a), _content(b)
+    if min(len(sa), len(sb)) < 3 or na != nb or da != db or len(sa & sb) / min(len(sa), len(sb)) < 0.7:
+        return False
+    return not ((sa - sb) & _content(" ".join(quotes_a))[0] and (sb - sa) & _content(" ".join(quotes_b))[0])

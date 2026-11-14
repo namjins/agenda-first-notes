@@ -5,12 +5,13 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 
-PROMPT_VERSION = "1.9"  # 1.1 fenced text; 1.2/1.3 every discussed item; 1.4 place only under the item discussed;
+PROMPT_VERSION = "1.10"  # 1.1 fenced text; 1.2/1.3 every discussed item; 1.4 place only under the item discussed;
 # 1.5 user-confirmed names block
 # 1.6 proposed headings: fewer, broader, from every segment
 # 1.7 confirmed names link to the agenda item naming that person
 # 1.8 optional filing step (FILING_INSTRUCTIONS); extraction prompts unchanged
 # 1.9 proposed headings are combined into one short agenda (AGENDA_MERGE_INSTRUCTIONS); other prompts unchanged
+# 1.10 follow-up items: which describe the same action (only with more than one extraction pass)
 
 _DELIM_RUN = re.compile(r"<{3,}|>{3,}")
 
@@ -133,6 +134,14 @@ AGENDA_MERGE_INSTRUCTIONS = """These agenda headings were proposed separately fr
 {headings}
 HEADINGS>>>
 Return JSON: {{"topics": [{{"text": "...", "children": [{{"text": "..."}}]}}]}}"""
+
+# Sent only with more than one extraction pass: two answers word the same follow-up differently. The model returns
+# item numbers only; it cannot write or reword an item.
+FOLLOW_UP_MERGE_INSTRUCTIONS = """These numbered follow-up items come from one meeting's notes. Some describe the same action in different words. Find the groups of items that describe the same action: the same thing to be done, about the same people and the same subject. Items that only share a topic, or that are steps one after the other, are different actions; leave them apart. When unsure, leave items apart.
+<<<ITEMS
+{items}
+ITEMS>>>
+Return JSON: {{"same": [[1, 4], [2, 7, 9]]}} listing only groups of two or more item numbers; {{"same": []}} when no items describe the same action."""
 
 OCR_INSTRUCTIONS = """This image is a screenshot of a meeting agenda. Transcribe every agenda line exactly as written (spelling, capitalization, punctuation). Represent nesting with two leading spaces per level. Output only the agenda lines, one per line, no commentary, no bullets."""
 

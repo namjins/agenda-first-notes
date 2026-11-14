@@ -72,7 +72,8 @@ def test_dedupe_keeps_the_supported_copy_and_the_cautious_category() -> None:
     claim = "Council agreed to hold the service project in May."
     excluded = {"severity": "high", "action": "excluded", "note_id": None}
     a = note(text=claim, category="decision", status="unsupported", follow_up=True, _findings=[excluded])
-    b = note(text=claim, category="decision", evidence=[ev("the council agreed the service project is in May")])
+    q = ev("the council agreed the service project is in May")
+    b = note(text=claim, category="decision", follow_up=True, evidence=[q])
     (kept,) = pipeline.dedupe([a, b])
     assert kept["status"] == "verified" and kept["evidence"] and excluded["severity"] == "info"
     out = md([kept])
@@ -402,8 +403,56 @@ def test_same_claim_keeps_different_people_places_numbers_and_negations_apart() 
     ]
     for a, b in pairs:
         assert not evidence.same_claim(a, b), a
-        assert len(pipeline.dedupe([note(text=a, evidence=[ev("x y")]), note(text=b, evidence=[ev("x z")])])) == 2
+        assert len(pipeline.dedupe([note(text=a, evidence=[ev(a)]), note(text=b, evidence=[ev(b)])])) == 2
     assert evidence.same_claim("Draft the rotation list.", "draft the rotation list")
+
+
+def test_the_same_finding_worded_twice_is_merged_and_the_fuller_wording_kept() -> None:
+    q = ev("SYNTHETIC maybe the youth could rotate on the piano, Robin is not confident yet")
+    a = "A participant suggested rotating the youth on the piano; Robin is not confident."
+    b = "The speaker proposed rotating the youth on the piano, noting Robin is not confident yet."
+    out = pipeline.dedupe([note(text=a, evidence=[q]), note(text=b, evidence=[q], follow_up=True)])
+    assert [n["text"] for n in out] == [b] and not out[0]["follow_up"]  # tagged by one answer only: no tag
+    (both,) = pipeline.dedupe([note(text=a, evidence=[q], follow_up=True), note(text=b, evidence=[q], follow_up=True)])
+    assert both["follow_up"]
+    # a word of its own from the transcript on each side is a different fact, however alike the rest
+    c = "Contact Casey Morgan about the primary roster this week."
+    d = "Contact Casey Morgan about the nursery roster this week."
+    assert len(pipeline.dedupe([note(text=c, evidence=[ev(c)]), note(text=d, evidence=[ev(d)])])) == 2
+
+
+def test_a_follow_up_filed_under_two_items_is_listed_once_but_typed_notes_with_other_names_both_stay() -> None:
+    q = ev("SYNTHETIC someone should find a helper for the building duties if the right person turns up")
+    a = "A participant wants to find a helper for the building duties if the right person turns up."
+    b = "The speaker wants to find a helper for building duties, if the right person turns up."
+    out = md(
+        [note(text=a, evidence=[q], follow_up=True), note(text=b, evidence=[q], follow_up=True, agenda_node_id="n2")]
+    )
+    assert out.split(render.FOLLOW_UP_HEADING)[1].count("\n- ") == 1
+    typed = [
+        note(text=f"Call {who} Alpha about the youth budget report this week.", follow_up=True, origin="user")
+        for who in ("Sam", "Pat")
+    ]
+    assert md(typed).split(render.FOLLOW_UP_HEADING)[1].count("\n- ") == 2
+
+
+def test_follow_ups_the_model_calls_the_same_keep_one_tag_and_a_bad_answer_changes_nothing() -> None:
+    def items() -> list[dict[str, Any]]:
+        texts = ["Arrange the release meeting.", "Order chairs.", "Set a time to release them.", "Done already."]
+        out = [note(text=x, follow_up=True, agenda_node_id="n2" if i == 2 else "n1") for i, x in enumerate(texts)]
+        out[3]["category"] = "completion"  # never listed, so never sent
+        return out
+
+    def tags(answer: str) -> list[bool]:
+        p, notes = FakeProvider(lambda _r: answer), items()
+        pipeline.combine_follow_ups(p, SETTINGS, "ward_council", notes)
+        assert p.requests[0].purpose == "merge" and "3. Set a time" in p.requests[0].prompt
+        assert "Done already" not in p.requests[0].prompt
+        return [n["follow_up"] for n in notes]
+
+    assert tags('{"same": [[3, 1], [2, 9], [1, 2]]}') == [True, True, False, True]  # unknown and reused numbers ignored
+    assert tags("not json") == [True, True, True, True]
+    assert tags('{"same": []}') == [True, True, True, True]
 
 
 def test_month_may_and_the_word_discussion_do_not_disable_hedge_detection() -> None:
@@ -715,7 +764,7 @@ def test_k6_k7_user_deletions_and_old_transcripts_never_mark_an_item_discussed()
 
 
 def test_k6_extraction_prompt_lists_every_discussed_item() -> None:
-    assert prompts.PROMPT_VERSION == "1.9" and "EVERY agenda item" in prompts.EXTRACT_INSTRUCTIONS
+    assert prompts.PROMPT_VERSION == "1.10" and "EVERY agenda item" in prompts.EXTRACT_INSTRUCTIONS
 
 
 def test_k_merge_rederives_status_with_the_transcript() -> None:
@@ -855,7 +904,7 @@ def test_l5_placement_must_be_about_the_item_not_the_nearest_one() -> None:
     assert not pipeline.placement_findings({**off, "source_node_id": "c1"}, tree, t)  # the user moved it there
     out = render.render(title="", meeting_date=None, tree=tree, notes=[near], coverage_complete=True)
     assert "  - Food drive\n    - Not discussed." in out  # leaves render from their own evidence only
-    assert "ONLY when the discussion is actually about" in prompts.CORE_POLICY and prompts.PROMPT_VERSION == "1.9"
+    assert "ONLY when the discussion is actually about" in prompts.CORE_POLICY and prompts.PROMPT_VERSION == "1.10"
 
 
 def test_l6_numbers_and_times_must_be_in_the_evidence() -> None:

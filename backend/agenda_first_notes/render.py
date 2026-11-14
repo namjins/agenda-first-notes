@@ -7,6 +7,7 @@ from datetime import date
 from typing import Any
 
 from .agenda import AgendaNode, walk
+from .evidence import similar_claim
 
 FOLLOW_UP_HEADING = "Next Meeting – Follow-Up Items"
 NO_FOLLOW_UPS = "No follow-up items identified."
@@ -145,6 +146,7 @@ def render(
     lines.append(FOLLOW_UP_HEADING)
     items: list[str] = []
     seen: set[str] = set()
+    listed: list[tuple[str, list[str]]] = []
     placed = {n.id for n, _ in walk(tree)}
     for n in sorted(
         (n for n in notes if is_follow_up(n) and not n.get("deleted") and n.get("agenda_node_id") in placed),
@@ -152,8 +154,12 @@ def render(
     ):
         t = bullet_text({**n, "follow_up": False})
         key = clean_text(n["text"]).lower().rstrip(".")
-        if key not in seen:
+        # The same follow-up filed under two agenda items is listed once (rule 10). A note without evidence (typed
+        # by the user) counts its own words as transcript facts, so only wording-only differences are folded.
+        quotes = [e["quote"] for e in n.get("evidence") or [] if e.get("quote")] or [n["text"]]
+        if key not in seen and not any(similar_claim(k, n["text"], kq, quotes) for k, kq in listed):
             seen.add(key)
+            listed.append((n["text"], quotes))
             items.append(t)
     for t in extra_follow_ups or []:
         t = clean_text(t)

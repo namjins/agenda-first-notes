@@ -78,6 +78,10 @@ class AgendaProposal(BaseModel):
     topics: list[TopicProposal] = Field(default_factory=list)
 
 
+class FollowUpGroups(BaseModel):
+    same: list[list[int]] = Field(default_factory=list)
+
+
 class PipelineError(RuntimeError):
     pass
 
@@ -395,12 +399,14 @@ _LEVELS = ("low", "medium", "high")
 
 
 def _merge(k: dict[str, Any], n: dict[str, Any], transcript: str = "", confirmed: Confirmed = ()) -> None:
-    """Fold duplicate n into k: weaker category/wording, higher uncertainty, union of evidence, re-derived status."""
-    if CAUTION.index(n["category"]) < CAUTION.index(k["category"]):
+    """Fold duplicate n into k: weaker category/wording, higher uncertainty, follow-up only when both say so, union
+    of evidence, re-derived status."""
+    kc, nc = CAUTION.index(k["category"]), CAUTION.index(n["category"])
+    if nc < kc or (nc == kc and len(n["text"]) > len(k["text"])):  # equally cautious: the fuller wording
         k["text"], k["category"] = n["text"], n["category"]
     k["uncertainty"] = max(k["uncertainty"], n["uncertainty"], key=_LEVELS.index)
     k["calling_event"] = k["calling_event"] or n["calling_event"]
-    k["follow_up"] = k["follow_up"] or n["follow_up"]
+    k["follow_up"] = k["follow_up"] and n["follow_up"]  # answers disagree on the tag: omit it (rules 9, 12)
     owners = {o for o in (k["owner"], n["owner"]) if o}
     k["owner"] = owners.pop() if len(owners) == 1 and k["category"] == "assignment" else None
     for ev in n["evidence"]:
@@ -427,13 +433,50 @@ def dedupe(notes: list[dict[str, Any]], transcript: str = "", confirmed: Confirm
             if (
                 k["agenda_node_id"] == n["agenda_node_id"]
                 and len(ce) <= 1
-                and evidence.same_claim(k["text"], n["text"])
+                and evidence.similar_claim(
+                    k["text"], n["text"], [e["quote"] for e in k["evidence"]], [e["quote"] for e in n["evidence"]]
+                )
             ):
                 _merge(k, n, transcript, confirmed)
                 break
         else:
             kept.append(n)
     return kept  # discussion markers are kept: render decides whether the fallback line shows
+
+
+def combine_follow_ups(
+    provider: ModelProvider, settings: ModelSettings, workspace_id: str, notes: list[dict[str, Any]]
+) -> None:
+    """Several extraction passes word the same follow-up differently, often under different agenda items, so the
+    final list repeats it. One short request (item texts only) asks which items are the same action; of each group
+    the first keeps its follow-up tag and the others lose it. The notes themselves stay. An unusable answer changes
+    nothing."""
+    items = [n for n in notes if n["follow_up"] and n["category"] != "completion" and n["agenda_node_id"]]
+    if len(items) < 2:
+        return
+    req = GenerateRequest(
+        model=settings.primary_model or "",
+        system=prompts.system_prompt(workspace_id),
+        prompt=prompts.FOLLOW_UP_MERGE_INSTRUCTIONS.format(
+            items=prompts.fence("\n".join(f"{i}. {n['text']}" for i, n in enumerate(items, 1)))
+        ),
+        json_schema=strict_schema(FollowUpGroups),
+        temperature=settings.temperature,
+        num_ctx=settings.context_length,
+        max_tokens=min(settings.max_output_tokens, 4096),
+        purpose="merge",
+        think=settings.think,
+    )
+    try:
+        groups = _parse(FollowUpGroups, provider.generate(req)).same
+    except (PipelineError, ProviderError):
+        return
+    used: set[int] = set()
+    for g in groups:
+        g = [i for i in dict.fromkeys(g) if 1 <= i <= len(items) and i not in used]
+        used.update(g)
+        for i in sorted(g)[1:]:
+            items[i - 1]["follow_up"] = False
 
 
 def claim_exists(

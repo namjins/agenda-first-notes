@@ -521,6 +521,17 @@ def process_meeting(
                 )
                 # partial: answer cut off, notes before the cut kept; coverage then counts as incomplete
                 seg.status = "partial" if any(f["category"] == "segment_partial" for f in findings) else "done"
+                for _ in range(settings.extraction_passes - 1):
+                    if cancel():
+                        raise Cancelled()
+                    try:  # extra passes only add notes (dedupe below merges repeats); a failed one loses nothing
+                        more, more_f = pipeline.extract_segment(
+                            provider, settings, wid, tree, text, seg, len(segs), tv_id, confirmed
+                        )
+                    except (pipeline.PipelineError, ProviderError):
+                        break
+                    notes += more
+                    findings += [f for f in more_f if f["category"] != "segment_partial"]
                 all_notes.extend(notes)
                 all_findings.extend(findings)
             except (pipeline.PipelineError, ProviderError) as e:
@@ -541,6 +552,10 @@ def process_meeting(
             first = next((x.error for x in segs if x.error), "")
             raise ServiceError(f"No part of the transcript could be processed; previous notes kept. {first}")
         notes = pipeline.dedupe(all_notes, text, confirmed)
+        if settings.extraction_passes > 1:
+            if cancel():
+                raise Cancelled()
+            pipeline.combine_follow_ups(provider, settings, wid, notes)
         with session_for(ws) as s:
             # Each user-touched note (edited, untagged, moved or deleted) wins over ONE fresh model note making the
             # same claim (its current text, or its original model text): on the same item first, then under the same

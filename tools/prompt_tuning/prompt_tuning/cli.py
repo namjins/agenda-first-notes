@@ -161,6 +161,9 @@ def _common(p: argparse.ArgumentParser) -> None:
         default=True,
         help="ask separately where each note belongs (app setting, on by default)",
     )
+    p.add_argument(
+        "--extraction-passes", type=int, default=1, help="ask for each chunk this many times and merge (app setting)"
+    )
 
 
 def _synthetic(data: list[Path]) -> bool:
@@ -195,6 +198,7 @@ def _setup(args: argparse.Namespace) -> tuple[App, list[Meeting]]:
         args.segment_chars,
         args.context_length,
         args.filing_step,
+        args.extraction_passes,
     ), meetings
 
 

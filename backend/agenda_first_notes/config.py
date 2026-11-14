@@ -53,6 +53,9 @@ class ModelSettings(BaseModel):
     think: bool = False  # reasoning models think before answering (extract/review/agenda); off = faster
     review_by_segment: bool = False  # review long transcripts part by part (sees all of it; more requests)
     filing_step: bool = True  # second short request per segment: where does each note belong (real tests: +7 pts)
+    # Ask for each segment this many times and merge the notes (the model catches a different part of the facts each
+    # time; saved real passes: 1 -> 68% of facts, 2 -> 75%, 3 -> 79%). Each extra pass adds the full extraction time.
+    extraction_passes: int = Field(default=1, ge=1, le=3)
 
 
 class GlobalSettings(BaseModel):
