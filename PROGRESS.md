@@ -243,7 +243,7 @@ Real-meeting findings (maintainer samples, kept outside the repo; see CLAUDE.md 
 
 ## Hand-off — 2026-11-14 (start here)
 
-State: `main` = `origin/main` = `7798ad7` plus this section (uncommitted). Nothing is running. Backend 250 passed, 1 skipped; prompt-tuning tool 28 passed; `PROMPT_VERSION` 1.10. Model qwen3.8:27b, review off, filing step on, one extraction pass (default).
+State (updated 2026-11-15): `main` = `origin/main` = `38645d9`. Nothing is running. Backend 251 passed, 1 skipped; `PROMPT_VERSION` 1.11. Model qwen3.8:27b, review off, filing step on, one extraction pass (default; now choosable in Settings). Next (maintainer decision 2026-11-15): no more tuning until the maintainer has used the app on a real meeting; start from the two or three things that bothered them most in those notes.
 
 Shipped this session (details in the section above): cut-off answers are asked again and salvaged (`b8eb6f3`); no-agenda headings are combined into one short agenda (`a920097`); optional `extraction_passes` 1-3 with looser merging of repeats, follow-up tag only when both merged notes have it, final list without cross-item repeats, and a model step that combines the follow-up list when passes > 1 (`dafddd3`).
 
