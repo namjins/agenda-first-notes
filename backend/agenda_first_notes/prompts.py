@@ -5,13 +5,14 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 
-PROMPT_VERSION = "1.10"  # 1.1 fenced text; 1.2/1.3 every discussed item; 1.4 place only under the item discussed;
+PROMPT_VERSION = "1.11"  # 1.1 fenced text; 1.2/1.3 every discussed item; 1.4 place only under the item discussed;
 # 1.5 user-confirmed names block
 # 1.6 proposed headings: fewer, broader, from every segment
 # 1.7 confirmed names link to the agenda item naming that person
 # 1.8 optional filing step (FILING_INSTRUCTIONS); extraction prompts unchanged
 # 1.9 proposed headings are combined into one short agenda (AGENDA_MERGE_INSTRUCTIONS); other prompts unchanged
 # 1.10 follow-up items: which describe the same action (only with more than one extraction pass)
+# 1.11 extraction keeps specific details (dates, numbers, conditions) inside the finding about their subject
 
 _DELIM_RUN = re.compile(r"<{3,}|>{3,}")
 
@@ -87,6 +88,7 @@ EXTRACT_INSTRUCTIONS = """Approved agenda (address nodes by the id in brackets):
 TRANSCRIPT>>>
 
 Return JSON with a "findings" list. Each finding: agenda_node_id (string id from the agenda or null), text (one concise outcome sentence), category (one of: decision, proposed_decision, assignment, calling_event, date, status_change, clarification, open_question, dependency, follow_up_candidate, completion, uncertainty, discussion), uncertainty (low|medium|high), follow_up (bool), owner (full name or null), calling_event (lifecycle event or null), evidence (list of exact verbatim quotes from the excerpt that support this exact claim at this exact certainty). Return an empty findings list if nothing substantive is in this excerpt.
+Keep the specific details stated about a decision, assignment, event or task: dates, times, places, numbers, amounts, deadlines, and conditions that must be met before it can go ahead. Write each detail into the finding about that subject, as the quote states it; never replace it with a vague phrase such as "details were discussed". Only when no finding covers that subject, give the detail its own finding that names the subject. A date or number that was only asked about or suggested is a proposal, not a settled fact. Do not add a month, weekday or year that was not said, and do not correct a number that sounds garbled. Leave out numbers from jokes, stories, examples, and scripture or hymn references. Use category "date" only for a settled date of an event or deadline. A detail on its own does not make a follow-up.
 Also return a "discussed" list: one entry for EVERY agenda item that the excerpt clearly discusses (only items the discussion is actually about, as for findings), whether or not a finding above records an outcome for it. Each entry: agenda_node_id (string id from the agenda), evidence (exact verbatim quotes from the excerpt showing that discussion). Do not list items that are only mentioned in passing or not discussed at all."""
 
 FILING_INSTRUCTIONS = """Approved agenda (address nodes by the id in brackets):

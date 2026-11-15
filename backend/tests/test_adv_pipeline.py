@@ -764,7 +764,7 @@ def test_k6_k7_user_deletions_and_old_transcripts_never_mark_an_item_discussed()
 
 
 def test_k6_extraction_prompt_lists_every_discussed_item() -> None:
-    assert prompts.PROMPT_VERSION == "1.10" and "EVERY agenda item" in prompts.EXTRACT_INSTRUCTIONS
+    assert prompts.PROMPT_VERSION == "1.11" and "EVERY agenda item" in prompts.EXTRACT_INSTRUCTIONS
 
 
 def test_k_merge_rederives_status_with_the_transcript() -> None:
@@ -904,7 +904,7 @@ def test_l5_placement_must_be_about_the_item_not_the_nearest_one() -> None:
     assert not pipeline.placement_findings({**off, "source_node_id": "c1"}, tree, t)  # the user moved it there
     out = render.render(title="", meeting_date=None, tree=tree, notes=[near], coverage_complete=True)
     assert "  - Food drive\n    - Not discussed." in out  # leaves render from their own evidence only
-    assert "ONLY when the discussion is actually about" in prompts.CORE_POLICY and prompts.PROMPT_VERSION == "1.10"
+    assert "ONLY when the discussion is actually about" in prompts.CORE_POLICY and prompts.PROMPT_VERSION == "1.11"
 
 
 def test_l6_numbers_and_times_must_be_in_the_evidence() -> None:
