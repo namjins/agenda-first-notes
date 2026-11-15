@@ -57,6 +57,7 @@ export default function SettingsPage() {
           ))}
         </div>
         <label className="mt-3 flex items-center gap-2 text-sm"><input type="checkbox" checked={m.filing_step} onChange={(e) => set('filing_step', e.target.checked)} />Double-check where each note belongs (one extra short request per segment)</label>
+        <label className="mt-3 block text-sm"><span className="muted block text-xs">Read each segment more than once and combine the notes (more facts, about 1.7&times; the time for 2)</span><select className="input" value={m.extraction_passes} onChange={(e) => set('extraction_passes', Number(e.target.value))}>{[1, 2, 3].map((n) => <option key={n} value={n}>{n === 1 ? 'Once (default)' : `${n} times`}</option>)}</select></label>
         <p className="muted mt-2 text-xs">Models run sequentially to conserve memory. Lower-memory machines: choose a smaller model and reduce context length. Transcripts longer than one segment are processed in overlapping chunks; nothing is truncated.</p>
       </Section>
       <div className="flex items-center gap-3"><button className="btn btn-primary" onClick={save}>Save settings</button>{saved && <span className="tag tag-ok">Saved</span>}<span className="muted text-xs">{paths}</span></div>
