@@ -10,6 +10,17 @@ import ollama
 
 from .base import GenerateRequest, ModelInfo, ProviderError
 
+REPEAT_TAIL, REPEAT_COUNT, CHECK_EVERY = 300, 6, 2000
+
+
+def looping(text: str) -> bool:
+    """The reply's last 300 characters already occur 6 times: a runaway answer. Real tests: about 1 long request in
+    25 repeats one finding word for word until the token cap (~9 min); stopping early leaves the same cut-off reply
+    the pipeline already asks again for and salvages."""
+    tail = text[-REPEAT_TAIL:]
+    return len(tail) == REPEAT_TAIL and text.count(tail) >= REPEAT_COUNT
+
+
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1", "[::1]", "0.0.0.0"}  # noqa: S104 - allowlist, not a bind
 
 
@@ -72,21 +83,19 @@ class OllamaProvider:
             "messages": [{"role": "system", "content": req.system}, msg],
             "format": fmt,
             "options": {"temperature": req.temperature, "num_ctx": req.num_ctx, "num_predict": req.max_tokens},
-            "stream": False,
+            "stream": True,
         }
         try:
             # Thinking is off unless the request asks for it: reasoning models otherwise spend the whole output
             # budget on hidden thinking and return "". Some models reject the flag, so fall back to the plain call.
             try:
-                resp = self._client.chat(**kwargs, think=req.think)
+                content = self._chat(kwargs, think=req.think)
             except ollama.ResponseError as e:
                 if "think" not in str(e).lower():
                     raise
-                resp = self._client.chat(**kwargs)
-            content = resp.message.content or ""
+                content = self._chat(kwargs)
             if not content.strip():
-                resp = self._client.chat(**kwargs)
-                content = resp.message.content or ""
+                content = self._chat(kwargs)
         except Exception as e:  # noqa: BLE001
             raise ProviderError(f"Ollama request failed for model {req.model!r}: {e}") from e
         if not content.strip():
@@ -95,3 +104,21 @@ class OllamaProvider:
                 "or the model emitted only reasoning). Increase max output tokens or choose another model."
             )
         return content
+
+    def _chat(self, kwargs: dict[str, Any], **extra: Any) -> str:
+        """Stream the reply and stop as soon as it loops; closing the stream makes Ollama stop generating."""
+        stream = self._client.chat(**kwargs, **extra)
+        parts: list[str] = []
+        size, next_check = 0, CHECK_EVERY
+        try:
+            for chunk in stream:
+                piece = chunk.message.content or ""
+                parts.append(piece)
+                size += len(piece)
+                if size >= next_check:
+                    next_check = size + CHECK_EVERY
+                    if looping(text := "".join(parts)):
+                        return text
+        finally:
+            getattr(stream, "close", lambda: None)()
+        return "".join(parts)

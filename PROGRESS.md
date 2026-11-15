@@ -261,7 +261,8 @@ Not done / ideas, none decided:
 - Tried and dropped: extraction without the agenda ("list outcomes only").
 - Wording that asks for each date/number/requirement as its own finding (38 of 224 gold facts are never captured, mostly such details); needs wording approval.
 - Follow-up lines that are status, not actions (the combine step does not remove them).
-- Early stop for a runaway answer (still about 9 min to the token cap); "file nowhere" as a last resort in the filing step; whether the filing step adds about one wrong note per pass.
+- Early stop for a runaway answer: built (uncommitted). `OllamaProvider` now streams and stops when the reply's last 300 characters already occur 6 times (checked every 2000 characters); the cut-off reply then takes the existing ask-again/salvage path. Replayed on the 14 saved real replies in `~/afn-tuning/runaway/`: the one runaway stops at 10,000 of 42,140 characters with the same 14 distinct findings salvaged; the 13 normal replies are untouched. Backend 251 passed, 1 skipped; ruff/format/mypy clean; live call to qwen3.8 on 11436 OK. Not measured on full passes.
+- "file nowhere" as a last resort in the filing step; whether the filing step adds about one wrong note per pass.
 
 This Mac only: Ollama for the app and the measuring scripts is the login item `com.afn.ollama` on 127.0.0.1:11436 (uses NVIDIA PAIR's bundled binary; breaks if PAIR is removed). Tuning scripts and saved passes live in `~/afn-tuning/` (outside the repo); real meetings in `sample_meetings/` (git-ignored); the maintainer's open questions in `sample_meetings/open-questions.md` (none open).
 
